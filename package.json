@@ -1,0 +1,8 @@
+{
+  "name": "hushroom",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Anonymous rooms and private conversations",
+  "scripts": { "start": "node --env-file-if-exists=.env server.mjs", "test": "node --test" },
+  "engines": { "node": ">=22" }
+}

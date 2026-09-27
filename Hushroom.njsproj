@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <ProjectGuid>{E2F357D9-7C4A-4F22-AD48-7AB8AB214345}</ProjectGuid>
+    <ProjectHome>.</ProjectHome><ProjectView>ShowAllFiles</ProjectView>
+    <StartupFile>server.mjs</StartupFile><WorkingDirectory>.</WorkingDirectory>
+    <OutputPath>.</OutputPath><Name>Hushroom</Name>
+    <NodejsPort>3000</NodejsPort><StartWebBrowser>True</StartWebBrowser>
+    <NodejsLaunchUrl>http://localhost:3000</NodejsLaunchUrl>
+    <NodeExeArguments>--env-file-if-exists=.env</NodeExeArguments>
+  </PropertyGroup>
+  <ItemGroup>
+    <Content Include="server.mjs"/><Content Include="package.json"/>
+    <Content Include="public\index.html"/><Content Include="public\style.css"/>
+    <Content Include="public\app.js"/><Content Include="public\favicon.svg"/>
+    <Content Include="README.md"/><Content Include=".env.example"/>
+    <Content Include="test\chat.test.mjs"/>
+  </ItemGroup>
+  <Import Project="$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)\Node.js Tools\Microsoft.NodejsTools.targets" />
+</Project>

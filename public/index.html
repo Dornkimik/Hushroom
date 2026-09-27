@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="A little less noise. A little more conversation. Anonymous rooms and private chats.">
+  <title>Hushroom — A little company</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <a class="brand" href="/" aria-label="Hushroom home"><span class="brand-icon">h<span>•</span></span>hushroom<span class="brand-dot">.</span></a>
+      <div class="sidebar-intro">Good company.<br>No introductions needed.</div>
+      <div class="section-label">THE ROOMS <span id="room-count">0</span></div>
+      <nav id="rooms" aria-label="Chat rooms"></nav>
+      <div class="section-label dm-label">PRIVATE CHATS <span>↗</span></div>
+      <nav id="dms" aria-label="Private conversations"></nav>
+      <p class="aside-hint" id="dm-hint">Find someone on the right.<br>Start a conversation.</p>
+      <div class="sidebar-bottom">
+        <button class="admin-link" id="open-admin"><span>◇</span> Room management <span>↗</span></button>
+        <div class="identity"><span class="avatar me-avatar">?</span><div><strong id="my-alias">Finding your alias…</strong><small>Your anonymous identity</small></div></div>
+      </div>
+    </aside>
+    <main>
+      <header class="topbar"><div class="breadcrumb">YOUR LITTLE CORNER OF THE INTERNET</div><span class="connection" id="connection">Connecting…</span></header>
+      <section class="room-heading"><div class="room-symbol" id="room-symbol">#</div><div><div class="eyebrow" id="conversation-type">COME AS YOU ARE</div><h1 id="room-title">The living room</h1><p id="room-description">A little company. A good conversation.</p></div><span class="room-badge" id="room-badge">OPEN ROOM</span></section>
+      <div class="chat-scroll" id="chat-scroll">
+        <div class="welcome" id="welcome"><div class="welcome-mark">✳</div><h2>Make yourself at home.</h2><p>Big thoughts, small talk, or just a hello.<br>There’s room for all of it here.</p><div class="welcome-pills"><span>No accounts</span><span>Just conversation</span></div></div>
+        <div class="day-divider"><span>HERE & NOW</span></div>
+        <div id="messages" role="log" aria-live="polite" aria-label="Chat messages"></div>
+        <p class="empty-chat" id="empty-chat">It’s quiet in here. Be the first to say hello.</p>
+      </div>
+      <div class="composer-wrap"><div class="private-note" id="private-note" hidden>Only you and this person can see this conversation in the app.</div><form id="composer"><label class="sr-only" for="message">Your message</label><textarea id="message" rows="1" maxlength="2000" placeholder="Leave a little thought…" required></textarea><button class="send-button" type="submit" aria-label="Send message">↑</button></form><div class="composer-caption"><span><span class="tiny-spark">✳</span> A temporary alias. A real conversation.</span><span>Enter to send <span class="key">↵</span></span></div><p id="error" role="alert" hidden></p></div>
+    </main>
+    <aside class="people-sidebar"><div class="people-header"><h2>In good company</h2><span id="online-count">0</span></div><p class="people-caption">A familiar face starts with a hello.</p><div id="people"></div><div class="room-note"><span class="note-icon">✳</span><h3>A little room etiquette</h3><p>Be curious. Be kind.<br>Give people space to be themselves.</p><div class="note-rule"></div><p class="privacy-copy">No account or real name needed. Messages are temporary. Please keep personal details to yourself.</p><button id="privacy-button">How privacy works ↗</button></div><div class="footer-wordmark">LESS NOISE. MORE CONNECTION.</div></aside>
+  </div>
+  <dialog id="admin-dialog"><div class="dialog-heading"><div><div class="eyebrow">HOST’S CORNER</div><h2>Room management</h2></div><button class="close-dialog" aria-label="Close admin panel">×</button></div>
+    <form id="admin-login"><p>Use your admin password to manage the rooms.</p><label for="admin-password">Admin password</label><input id="admin-password" type="password" autocomplete="current-password" required><button class="primary" type="submit">Unlock controls ↗</button></form>
+    <div id="admin-controls" hidden><form id="create-room"><label for="new-room">Room name</label><input id="new-room" maxlength="40" placeholder="Somewhere worth staying" required><label for="new-description">Description <span>(optional)</span></label><input id="new-description" maxlength="120" placeholder="What’s the conversation about?"><button class="primary" type="submit">Create room +</button></form><div id="admin-rooms"></div><button id="admin-logout" class="text-button">Lock admin controls</button></div><p id="admin-error" role="alert"></p>
+  </dialog>
+  <dialog id="delete-dialog"><h2>Remove this room?</h2><p id="delete-description"></p><div class="dialog-actions"><button id="cancel-delete" class="text-button">Keep room</button><button id="confirm-delete" class="danger">Remove room</button></div><p id="delete-error" role="alert"></p></dialog>
+  <dialog id="privacy-dialog"><div class="dialog-heading"><h2>A note on privacy</h2><button class="close-dialog" aria-label="Close privacy note">×</button></div><p>You’re given a random alias and a temporary session cookie. No account, email address, or real name is requested.</p><p>Public rooms are visible to all visitors. Private chats are available only to their two participants through this app. They are not end-to-end encrypted; the server processes their contents.</p><p>Only the latest 100 messages per conversation are kept in server memory. They disappear when the server restarts. Inactive identities and their private history expire after 24 hours. Room names and descriptions are saved to disk.</p><p>Your hosting provider may keep connection logs, including IP addresses. Anonymous here means no public identity, not untraceable activity.</p></dialog>
+</body>
+</html>
