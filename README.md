@@ -16,7 +16,7 @@ No `npm install` step is needed. Visual Studio's project launcher is included; t
 
 This local copy includes a generated admin password in `.env`, on the `ADMIN_PASSWORD=` line. Click **Room management** in the website and enter that password. Visitors never need a password. If `.env` is absent, the terminal prints a temporary admin password instead.
 
-For a permanent password, copy `.env.example` to `.env`, fill in `ADMIN_PASSWORD` with a long, unique password, and restart `npm start`. Keep `.env` private. Admin access expires after one hour, and **Lock admin controls** ends it immediately. Rooms can be created or removed in the admin panel. Removing a room deletes its current history after a confirmation.
+For a permanent password, copy `.env.example` to `.env`, fill in `ADMIN_PASSWORD` with a long, unique password, and restart `npm start`. Keep `.env` private. Admin access expires after one hour, and **Lock admin controls** ends it immediately. Rooms can be created or removed in the admin panel. Hosts can also ban an active anonymous browser session, unban it later, or remove individual messages from everyone’s view. Session bans survive server restarts in `data/bans.json`, which stores hashed session-cookie values; clearing browser cookies creates a new session and is not prevented by a session ban.
 
 ## Try a private chat
 
@@ -33,6 +33,7 @@ Open the site in two separate browsers, or one normal and one private browser wi
 | `server.mjs` | Chat server, temporary identities, room management |
 | `.env` | Password and hosting settings; create from `.env.example` |
 | `data/rooms.json` | Saved rooms, generated after the first room change |
+| `data/bans.json` | Hashed session-cookie bans, generated when a session is banned |
 
 Refresh after frontend edits. Restart the server after changing `server.mjs` or `.env`. The main colors are at the beginning of `style.css`.
 

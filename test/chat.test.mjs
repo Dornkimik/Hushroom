@@ -25,8 +25,8 @@ test('anonymous public chat, private isolation, admin control and persistence', 
   async function events(user) {
     const controller = new AbortController(); streams.push(controller);
     const res = await fetch(`${origin}/api/events`, { headers: { Cookie: user.cookie }, signal: controller.signal });
-    let buffer = ''; const messages = [];
-    (async () => { try { for await (const chunk of res.body) { buffer += new TextDecoder().decode(chunk); let end; while ((end = buffer.indexOf('\n\n')) !== -1) { const part = buffer.slice(0, end); buffer = buffer.slice(end + 2); if (part.startsWith('event: message')) messages.push(JSON.parse(part.split('\ndata: ')[1])); } } } catch {} })();
+    let buffer = ''; const messages = []; messages.removals = [];
+    (async () => { try { for await (const chunk of res.body) { buffer += new TextDecoder().decode(chunk); let end; while ((end = buffer.indexOf('\n\n')) !== -1) { const part = buffer.slice(0, end); buffer = buffer.slice(end + 2); if (part.startsWith('event: message\n')) messages.push(JSON.parse(part.split('\ndata: ')[1])); if (part.startsWith('event: message-removed\n')) messages.removals.push(JSON.parse(part.split('\ndata: ')[1]).id); } } } catch {} })();
     return messages;
   }
   try {
@@ -44,8 +44,20 @@ test('anonymous public chat, private isolation, admin control and persistence', 
     assert.equal((await request(a, 'message', { room, text: 'x'.repeat(2001) })).status, 400);
     assert.equal((await request(a, 'message', { room, text: 'forged' }, 'https://other.example')).status, 403);
     assert.equal((await request(c, 'admin/create', { name: 'Forbidden' })).status, 403);
+    assert.equal((await request(c, 'admin/remove-message', { id: pub.data.id })).status, 403);
+    assert.equal((await request(c, 'admin/ban', { id: b.me.id })).status, 403);
     assert.equal((await request(a, 'admin/login', { password: 'wrong' })).status, 403);
     assert.equal((await request(a, 'admin/login', { password: 'integration-test-password' })).status, 200);
+    assert.equal((await request(a, 'admin/ban', { id: a.me.id })).status, 400);
+    assert.equal((await request(a, 'admin/remove-message', { id: pub.data.id })).status, 200);
+    await new Promise(resolve => setTimeout(resolve, 100)); assert.ok(ae.removals.includes(pub.data.id)); assert.ok(ce.removals.includes(pub.data.id));
+    assert.deepEqual((await request(c, `history?room=${room}`)).data, []);
+    assert.equal((await request(a, 'admin/ban', { id: c.me.id })).status, 200);
+    assert.equal((await request(c, `history?room=${room}`)).status, 403);
+    assert.equal((await request(c, 'session')).status, 403);
+    assert.equal((await request(a, 'admin/state')).data.bans.some(ban => ban.id === c.me.id), true);
+    assert.equal((await request(a, 'admin/unban', { id: c.me.id })).status, 200);
+    const returned = await request(c, 'session'); assert.equal(returned.status, 200); assert.notEqual(returned.data.me.id, c.me.id);
     const creations = await Promise.all(['Reading room', 'Music room'].map(name => request(a, 'admin/create', { name, description: 'Come chat' })));
     assert.ok(creations.every(r => r.status === 200));
     assert.equal((await request(a, 'admin/create', { name: 'Reading room' })).status, 400);
@@ -54,8 +66,12 @@ test('anonymous public chat, private isolation, admin control and persistence', 
     assert.equal((await request(a, 'message', { room: remove, text: 'gone' })).status, 404);
     assert.equal((await request(a, 'admin/logout', {})).status, 200);
     assert.equal((await request(a, 'admin/delete', { id: room })).status, 403);
+    const d = await visitor();
+    assert.equal((await request(a, 'admin/login', { password: 'integration-test-password' })).status, 200);
+    assert.equal((await request(a, 'admin/ban', { id: d.me.id })).status, 200);
     for (const s of streams) s.abort(); await stop(); await boot();
     const fresh = await visitor(); assert.ok(fresh.rooms.some(r => r.name === 'Music room')); assert.ok(!fresh.rooms.some(r => r.name === 'Reading room'));
+    assert.equal((await request(d, 'session')).status, 403);
     assert.deepEqual((await request(fresh, `history?room=${room}`)).data, []);
     assert.equal((await request(a, `history?room=${room}`)).status, 401);
   } finally { for (const s of streams) s.abort(); await stop(); await rm(data, { recursive: true, force: true }); }

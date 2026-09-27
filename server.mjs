@@ -14,6 +14,9 @@ catch (e) { if (e.code !== 'ENOENT') throw e; rooms = [
   { id: 'after-hours', name: 'After hours', description: 'For night owls and wandering thoughts.' },
   { id: 'creative-corner', name: 'Creative corner', description: 'Ideas, works in progress, and happy accidents.' }
 ]; }
+let bans;
+try { bans = new Map(JSON.parse(await readFile(path.join(dataDir, 'bans.json'), 'utf8')).map(ban => [ban.key, ban])); }
+catch (e) { if (e.code !== 'ENOENT') throw e; bans = new Map(); }
 const sessions = new Map(), histories = new Map(), attempts = new Map();
 const password = process.env.ADMIN_PASSWORD || randomBytes(18).toString('base64url');
 const hash = value => createHash('sha256').update(value).digest();
@@ -32,6 +35,14 @@ const publishRooms = () => broadcast('rooms', roomList());
 const publicSession = s => ({ ...safeUser(s), admin: s.adminUntil > Date.now() });
 const keyFor = (s, room, peer) => peer ? `dm:${[s.id, peer].sort().join(':')}` : `room:${room}`;
 let saveQueue = Promise.resolve();
+function saveBans() {
+  const job = saveQueue.then(async () => {
+    await writeFile(path.join(dataDir, 'bans.tmp'), JSON.stringify([...bans.values()], null, 2));
+    await rename(path.join(dataDir, 'bans.tmp'), path.join(dataDir, 'bans.json'));
+  });
+  saveQueue = job.catch(() => {});
+  return job;
+}
 function saveRooms(transform) {
   const job = saveQueue.then(async () => {
     const next = transform(rooms);
@@ -65,6 +76,7 @@ const server = http.createServer(async (req, res) => {
     if (req.headers.origin && req.headers.origin !== origin) fail(403, 'Request origin is not allowed.');
     if (req.method !== 'GET' && req.headers.origin !== origin) fail(403, 'Request origin is not allowed.');
     const token = req.headers.cookie?.split(';').map(x => x.trim()).find(x => x.startsWith('hush='))?.slice(5);
+    if (token && bans.has(hash(token).toString('hex'))) fail(403, 'This anonymous session has been banned.');
     let session = sessions.get(token);
     if (url.pathname === '/api/session' && req.method === 'GET') {
       if (!session) {
@@ -91,6 +103,10 @@ const server = http.createServer(async (req, res) => {
       const peer = url.searchParams.get('peer'), room = url.searchParams.get('room');
       if (peer ? ![...sessions.values()].some(s => s.id === peer) : !rooms.some(r => r.id === room)) fail(404, 'Conversation is no longer available.');
       json(histories.get(keyFor(session, room, peer)) || []); return;
+    }
+    if (url.pathname === '/api/admin/state' && req.method === 'GET') {
+      if (session.adminUntil <= Date.now()) fail(403, 'Unlock admin controls first.');
+      json({ people: [...sessions.values()].filter(online).map(safeUser), bans: [...bans.values()].map(({ id, alias, bannedAt }) => ({ id, alias, bannedAt })) }); return;
     }
     if (req.method !== 'POST') fail(404, 'Not found.');
     const input = await body(req);
@@ -143,6 +159,38 @@ const server = http.createServer(async (req, res) => {
       }); histories.delete(`room:${input.id}`);
       for (const s of sessions.values()) if (s.room === input.id) s.room = rooms[0]?.id;
       publishRooms(); json({ ok: true }); return;
+    }
+    if (url.pathname === '/api/admin/ban') {
+      const target = [...sessions.entries()].find(([, s]) => s.id === input.id);
+      if (!target) fail(404, 'That person is no longer available.');
+      if (target[1].id === session.id) fail(400, 'You cannot ban your own session.');
+      const [targetToken, person] = target;
+      const key = hash(targetToken).toString('hex');
+      bans.set(key, { key, id: person.id, alias: person.alias, bannedAt: new Date().toISOString() });
+      try { await saveBans(); } catch (error) { bans.delete(key); throw error; }
+      for (const stream of person.streams) stream.end();
+      sessions.delete(targetToken); presence(); publishRooms(); broadcast('moderation', {});
+      json({ ok: true }); return;
+    }
+    if (url.pathname === '/api/admin/unban') {
+      const entries = [...bans.entries()].filter(([, ban]) => ban.id === input.id);
+      if (!entries.length) fail(404, 'That ban no longer exists.');
+      for (const [key] of entries) bans.delete(key);
+      try { await saveBans(); } catch (error) { for (const [key, ban] of entries) bans.set(key, ban); throw error; }
+      broadcast('moderation', {});
+      json({ ok: true }); return;
+    }
+    if (url.pathname === '/api/admin/remove-message') {
+      let found = false;
+      for (const [key, history] of histories) {
+        if (history.some(message => message.id === input.id)) {
+          histories.set(key, history.filter(message => message.id !== input.id));
+          found = true;
+        }
+      }
+      if (!found) fail(404, 'That message is no longer available.');
+      broadcast('message-removed', { id: input.id });
+      json({ ok: true }); return;
     }
     fail(404, 'Not found.');
   } catch (error) { if (!res.headersSent) json({ error: error.status ? error.message : 'Something went wrong. Please try again.' }, error.status || 500); else res.end(); }
