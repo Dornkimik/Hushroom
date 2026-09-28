@@ -51,6 +51,15 @@
     <section class="faq-section" aria-labelledby="faq-privacy">
       <h3 id="faq-privacy">Privacy &amp; encryption</h3>
       <details open><summary>Are all my messages end-to-end encrypted?</summary><p>Private-chat text, images, captions, and mentions are encrypted in your browser and decrypted in the participants’ browsers. Public-room messages are not end-to-end encrypted: visitors and the server can read them. Check that you are in a private conversation before sharing something personal.</p></details>
+      <details>
+        <summary>Why the fuck should I trust you?</summary>
+        <p>
+          You shouldn't, that's the point. Check for yourself. The app is open source, and you can run it on your own server or inspect the code in your browser. The source code is available at
+          <a href="https://github.com/Dornkimik/Hushroom" target="_blank" rel="noopener noreferrer">
+            https://github.com/Dornkimik/Hushroom
+          </a>
+        </p>
+      </details>
       <details><summary>Can the server or an admin read my private chats?</summary><p>With the app running as designed, the server receives encrypted private messages without the secret keys needed to read them. Admin access does not unlock other people’s private conversations.</p><p>This depends on trusting the app delivered to your browser. Someone controlling the website could change its code to capture messages or keys. A compromised device or browser extension could also expose them.</p></details>
       <details><summary>What can the server still see?</summary><p>The server can see aliases, who is talking to whom, connection IP addresses, message times, encrypted data sizes, and which messages are replies or have attachments. Encryption protects the contents of private messages; it does not hide all activity.</p></details>
       <details><summary>Am I completely anonymous?</summary><p>You do not need an account, email address, or real name. Other visitors see a random alias. That does not make you untraceable: the server handles your connection, and the hosting provider may keep logs that include IP addresses. What you write or show in an image can also identify you.</p></details>
