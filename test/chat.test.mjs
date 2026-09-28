@@ -83,10 +83,21 @@ test('anonymous public chat, private isolation, admin control and persistence', 
     assert.equal((await request(c, 'admin/create', { name: 'Forbidden' })).status, 403);
     assert.equal((await request(c, 'admin/remove-message', { id: pub.data.id })).status, 403);
     assert.equal((await request(c, 'admin/ban', { id: b.me.id })).status, 403);
+    // Ordinary users can delete their own public and private messages, but never another sender's.
+    assert.equal((await request(c, 'message/delete', { id: pub.data.id })).status, 404);
+    assert.equal((await request(b, 'message/delete', { id: dm.data.id })).status, 404);
+    assert.equal((await request(a, 'message/delete', { id: pub.data.id }, 'https://other.example')).status, 403);
+    assert.equal((await request(a, 'message/delete', { id: dm.data.id })).status, 200);
+    const afterPrivateDelete = (await request(b, `history?peer=${a.me.id}`)).data;
+    assert.ok(!afterPrivateDelete.some(m => m.id === dm.data.id));
+    assert.deepEqual(afterPrivateDelete.find(m => m.id === privateReply.data.id).reply, { id: dm.data.id, removed: true });
+    assert.equal((await request(a, 'message/delete', { id: dm.data.id })).status, 404);
+    assert.equal((await request(a, 'message/delete', { id: pub.data.id })).status, 200);
+    await new Promise(resolve => setTimeout(resolve, 50));
+    assert.ok(ae.removals.includes(dm.data.id)); assert.ok(be.removals.includes(dm.data.id)); assert.ok(!ce.removals.includes(dm.data.id));
     assert.equal((await request(a, 'admin/login', { password: 'wrong' })).status, 403);
     assert.equal((await request(a, 'admin/login', { password: 'integration-test-password' })).status, 200);
     assert.equal((await request(a, 'admin/ban', { id: a.me.id })).status, 400);
-    assert.equal((await request(a, 'admin/remove-message', { id: pub.data.id })).status, 200);
     await new Promise(resolve => setTimeout(resolve, 100)); assert.ok(ae.removals.includes(pub.data.id)); assert.ok(ce.removals.includes(pub.data.id));
     const remaining = (await request(c, `history?room=${room}`)).data;
     assert.equal(remaining.length, 1);
@@ -110,7 +121,11 @@ test('anonymous public chat, private isolation, admin control and persistence', 
     const ciphertext = new Uint8Array(await downloaded.arrayBuffer());
     assert.deepEqual(ciphertext, encryptedImage.bytes); assert.notDeepEqual(ciphertext, plaintext);
     assert.deepEqual(encryption.decryptImage(ciphertext, decrypt(sentImage.data, b, a).image), plaintext);
-    assert.equal((await request(a, 'admin/remove-message', { id: sentImage.data.id })).status, 200);
+    assert.equal((await request(a, 'admin/logout', {})).status, 200);
+    assert.equal((await request(b, 'message/delete', { id: sentImage.data.id })).status, 404);
+    assert.equal((await request(a, 'message/delete', { id: sentImage.data.id })).status, 200);
+    assert.equal((await request(a, 'admin/login', { password: 'integration-test-password' })).status, 200);
+    assert.equal((await request(a, 'admin/remove-message', { id: literal.data.id })).status, 200);
     assert.equal((await fetch(imageURL, { headers: { Cookie: b.cookie } })).status, 404);
     await new Promise(resolve => setTimeout(resolve, 50)); assert.ok(!ce.removals.includes(sentImage.data.id));
     assert.equal((await request(a, 'admin/ban', { id: c.me.id })).status, 200);

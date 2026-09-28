@@ -96,10 +96,10 @@ function renderMessages() {
     const replyButton = element('button', 'message-reply', 'Reply');
     replyButton.type = 'button'; replyButton.disabled = Boolean(message.locked); replyButton.onclick = () => { setReply(message); $('#message').focus(); };
     meta.append(replyButton);
-    if (me?.admin) {
-      const remove = element('button', 'message-remove', 'Remove');
+    if (own || me?.admin) {
+      const remove = element('button', 'message-remove', own ? 'Delete' : 'Remove');
       remove.type = 'button'; remove.title = 'Remove this message for everyone';
-      remove.onclick = async () => { remove.disabled = true; try { await api('admin/remove-message', { id: message.id }); } catch(e) { $('#admin-error').textContent = e.message; remove.disabled = false; } };
+      remove.onclick = async () => { remove.disabled = true; try { applyRemoval(await api(own ? 'message/delete' : 'admin/remove-message', { id: message.id })); } catch(e) { error(e.message); remove.disabled = false; } };
       meta.append(remove);
     }
     content.append(meta);
@@ -122,6 +122,14 @@ function renderMessages() {
   $('#empty-chat').hidden = messages.length > 0 || !current;
   $('#welcome').hidden = messages.length > 3;
   $('#chat-scroll').scrollTop = $('#chat-scroll').scrollHeight;
+}
+function applyRemoval(removed) {
+  if (!matches(removed)) return;
+  const { id } = removed;
+  revokeImage(id); messages = messages.filter(message => message.id !== id);
+  for (const message of messages) if (message.reply?.id === id) message.reply = { id, removed: true };
+  if (replying?.id === id) setReply(null);
+  renderMessages();
 }
 async function receive(message) {
   if (!message.room) {
@@ -428,7 +436,7 @@ async function start() {
     stream.addEventListener('people', event => { people = JSON.parse(event.data); renderPeople(); renderAdminPeople(); });
     stream.addEventListener('rooms', event => { rooms = JSON.parse(event.data); if (current?.room && !rooms.some(r => r.id === current.room)) { select(rooms[0] ? { room: rooms[0].id } : null); error('That room was removed by the host.'); } else if (!current && rooms[0]) select({ room: rooms[0].id }); else { renderRooms(); updateHeading(); } });
     stream.addEventListener('message', event => receive(JSON.parse(event.data)));
-    stream.addEventListener('message-removed', event => { const { id } = JSON.parse(event.data); revokeImage(id); messages = messages.filter(message => message.id !== id); for (const message of messages) if (message.reply?.id === id) message.reply = { id, removed: true }; if (replying?.id === id) setReply(null); renderMessages(); });
+    stream.addEventListener('message-removed', event => applyRemoval(JSON.parse(event.data)));
     stream.addEventListener('moderation', () => { if (me.admin) refreshAdminState(); });
     setInterval(() => {
       let changed = false;

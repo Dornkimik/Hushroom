@@ -74,6 +74,8 @@ For real browser checks, install dev dependencies with `npm ci`, then install a 
 
 ## Replies, mentions, emoji, and commands
 
+Choose **Delete** on your own message to remove it for everyone, including any attached image. No admin access is needed. Replies to deleted messages show that the original was removed.
+
 Choose **Reply** on a message to quote it in the same room or private conversation. Cancel the preview with ×. Quoted text is removed when the original message is moderated.
 
 Type `@` and part of an alias to tag someone. Choose a suggestion with the mouse, ↑/↓ and Enter, or Tab; Escape dismisses suggestions. Mentions use the full alias, including its unique suffix, and highlight messages for the tagged person. In private chats, only the two participants can be mentioned. The ☺ button opens a searchable emoji picker and inserts the selected emoji at the cursor.

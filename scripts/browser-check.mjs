@@ -58,6 +58,19 @@ try {
   await a.locator('#image-preview').waitFor({state:'visible'}); assert.equal(await a.locator('#message').inputValue(), '');
   await a.locator('.send-button').click();
   await b.waitForFunction(()=>[...document.querySelectorAll('.private-image')].filter(img=>img.complete && img.naturalWidth===160).length===2);
+  // Senders can delete their own images; recipients cannot. Replies and active previews are cleared.
+  const imageRow = `#message-${imageMessage.id}`;
+  assert.equal(await b.locator(imageRow).getByRole('button', {name:'Delete',exact:true}).count(), 0);
+  await b.locator(imageRow).getByRole('button', {name:'Reply',exact:true}).click();
+  await a.locator(imageRow).getByRole('button', {name:'Delete',exact:true}).click();
+  await a.locator(imageRow).waitFor({state:'detached'}); await b.locator(imageRow).waitFor({state:'detached'});
+  await b.locator('#reply-preview').waitFor({state:'hidden'});
+  await b.getByText('Original message removed', {exact:true}).waitFor();
+  assert.equal((await b.request.get(`${origin}/api/attachments/${imageMessage.attachmentId}`)).status(), 404);
+  // Ordinary public-room messages have the same Delete action.
+  await c.locator('#message').fill('public message to delete'); await c.locator('.send-button').click();
+  const publicRow = c.locator('.chat-message').filter({hasText:'public message to delete'});
+  await publicRow.getByRole('button', {name:'Delete',exact:true}).click(); await publicRow.waitFor({state:'detached'});
   // Private drafts must not appear in public room composers.
   await a.locator('#message').fill('unsent private draft');
   await a.locator('#rooms .nav-room').first().click(); assert.equal(await a.locator('#message').inputValue(), '');
@@ -82,7 +95,7 @@ try {
   await returned.waitForFunction(()=>document.querySelector('#error').textContent.includes('local encryption key does not match'));
   assert.equal(await returned.locator('#message').isDisabled(),true);
   assert.deepEqual(errors,[]);
-  console.log('PASS: private text, encrypted image, replies, third-party isolation, reload, shared-tab keys, matching verification codes, offline delivery, key-change/key-loss blocking, private draft isolation, desktop/mobile rendering');
+  console.log('PASS: private text, encrypted image, replies, third-party isolation, reload, shared-tab keys, matching verification codes, offline delivery, key-change/key-loss blocking, private draft isolation, owner deletion and attachment cleanup, desktop/mobile rendering');
 } finally {
   await browser?.close(); server.kill(); await once(server,'exit'); await rm(data,{recursive:true,force:true});
 }

@@ -263,20 +263,22 @@ const server = http.createServer(async (req, res) => {
       broadcast('moderation', {});
       json({ ok: true }); return;
     }
-    if (url.pathname === '/api/admin/remove-message') {
-      let found;
+    if (url.pathname === '/api/message/delete' || url.pathname === '/api/admin/remove-message') {
+      const adminRemoval = url.pathname === '/api/admin/remove-message';
+      let found, conversation;
       for (const [key, history] of histories) {
-        if (history.some(message => message.id === input.id)) {
-          found = history.find(message => message.id === input.id);
-          attachments.remove(found.attachment?.id);
-          histories.set(key, history.filter(message => message.id !== input.id));
-        }
-        for (const message of histories.get(key)) if (message.reply?.id === input.id) message.reply = { id: input.id, removed: true };
+        const message = history.find(m => m.id === input.id && (adminRemoval || m.sender === session.id));
+        if (message) { found = message; conversation = key; break; }
       }
-      if (!found) fail(404, 'That message is no longer available.');
-      if (found.room) broadcast('message-removed', { id: input.id });
-      else for (const s of sessions.values()) if (s.id === found.sender || s.id === found.recipient) emit(s, 'message-removed', { id: input.id });
-      json({ ok: true }); return;
+      if (!found) fail(404, 'That message is unavailable or does not belong to you.');
+      attachments.remove(found.attachment?.id);
+      const remaining = histories.get(conversation).filter(message => message.id !== found.id);
+      for (const message of remaining) if (message.reply?.id === found.id) message.reply = { id: found.id, removed: true };
+      histories.set(conversation, remaining);
+      const removed = { id: found.id, room: found.room, sender: found.sender, recipient: found.recipient };
+      if (found.room) broadcast('message-removed', removed);
+      else for (const s of sessions.values()) if (s.id === found.sender || s.id === found.recipient) emit(s, 'message-removed', removed);
+      json(removed); return;
     }
     fail(404, 'Not found.');
   } catch (error) { if (!res.headersSent) json({ error: error.status ? error.message : 'Something went wrong. Please try again.' }, error.status || 500); else res.end(); }
