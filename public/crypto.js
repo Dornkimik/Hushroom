@@ -102,15 +102,15 @@
     const db = await openDatabase('silenzachat-private-v1');
     let legacy;
     try {
-      legacy = await openDatabase('hushroom-private-v1');
+      legacy = await openDatabase('silenzachat-legacy-private-v1');
       for (const name of ['identities', 'peers']) await copyMissingEntries(db, name, await readEntries(legacy, name));
       legacy.close();
-      indexedDB.deleteDatabase('hushroom-private-v1');
+      indexedDB.deleteDatabase('silenzachat-legacy-private-v1');
       return db;
     } catch {
       db.close();
       legacy?.close();
-      return openDatabase('hushroom-private-v1');
+      return openDatabase('silenzachat-legacy-private-v1');
     }
   }
   // Read/write happen in one transaction, so simultaneous tabs cannot generate different identities.

@@ -19,10 +19,10 @@ try {
   const [ac,bc,cc] = await Promise.all([browser.newContext({ reducedMotion: 'reduce' }),browser.newContext({ reducedMotion: 'reduce' }),browser.newContext({ reducedMotion: 'reduce' })]);
   const [a,b,c] = await Promise.all([ac.newPage(),bc.newPage(),cc.newPage()]);
   await ac.addInitScript(() => {
-    localStorage.setItem('hushroom-theme', 'light');
+    localStorage.setItem('silenzachat-legacy-theme', 'light');
     const nativeFetch = window.fetch.bind(window);
     const ready = new Promise((resolve, reject) => {
-      const request = indexedDB.open('hushroom-private-v1', 1);
+      const request = indexedDB.open('silenzachat-legacy-private-v1', 1);
       request.onupgradeneeded = () => {
         request.result.createObjectStore('identities');
         request.result.createObjectStore('peers');
@@ -42,7 +42,7 @@ try {
   await Promise.all([a.goto(origin),b.goto(origin),c.goto(origin)]);
   assert.equal(await a.locator('html').getAttribute('data-theme'), 'light');
   assert.equal(await a.evaluate(() => localStorage.getItem('silenzachat-theme')), 'light');
-  assert.equal(await a.evaluate(() => localStorage.getItem('hushroom-theme')), null);
+  assert.equal(await a.evaluate(() => localStorage.getItem('silenzachat-legacy-theme')), null);
   await a.selectOption('#theme-select', 'dark');
   const migratedKeys = await a.evaluate(() => new Promise((resolve, reject) => {
     const request = indexedDB.open('silenzachat-private-v1');

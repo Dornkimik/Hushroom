@@ -1,6 +1,6 @@
 (() => {
   const key = 'silenzachat-theme';
-  const legacyKey = 'hushroom-theme';
+  const legacyKey = 'silenzachat-legacy-theme';
   const system = window.matchMedia('(prefers-color-scheme: dark)');
   const valid = value => ['light', 'dark', 'system'].includes(value);
   let preference = 'dark';
