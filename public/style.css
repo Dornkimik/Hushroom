@@ -210,3 +210,23 @@ dialog input { width: 100%; padding: 12px; border: 1px solid var(--line); border
 .image-note { color: var(--muted); font-size: 11px; }
 #verification-code { white-space: pre-wrap; overflow-wrap: anywhere; padding: 16px; background: var(--panel); border-radius: 8px; line-height: 1.8; }
 @media (max-width: 600px) { #composer { gap: 5px; padding-left: 10px; } }
+
+
+.topbar-actions { display: flex; align-items: center; gap: 12px; }
+.faq-link { padding: 8px 10px; border-radius: 6px; background: transparent; color: var(--accent); font-size: 12px; }
+.faq-link:hover { background: var(--accent-soft); }
+.faq-dialog { width: min(680px, calc(100% - 32px)); padding: 24px; }
+.faq-dialog h2 { margin: 8px 0; font-size: clamp(20px, 4vw, 26px); }
+.faq-dialog .close-dialog { flex-shrink: 0; }
+.faq-section { margin-top: 28px; }
+.faq-section h3 { margin: 0 0 12px; color: var(--accent); font-size: 13px; font-weight: 600; }
+.faq-section details { border-top: 1px solid var(--line); }
+.faq-section summary { padding: 16px 0; cursor: pointer; font-size: 14px; font-weight: 550; line-height: 1.6; }
+.faq-section summary::marker { color: var(--accent); }
+.faq-section summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+.faq-section details[open] summary { color: var(--accent); }
+.faq-section details p { margin: 0 0 16px; }
+@media (max-width: 600px) {
+  .topbar-actions { gap: 4px; }
+  .faq-dialog { padding: 20px; }
+}

@@ -379,7 +379,7 @@ $('#emoji-search').oninput = renderEmoji;
 $('#emoji-picker').onkeydown = event => { if (event.key === 'Escape') { toggleEmoji(false); $('#emoji-toggle').focus(); } };
 document.addEventListener('click', event => { if (!event.target.closest('.composer-wrap')) { closeSuggestions(); toggleEmoji(false); } });
 for (const close of document.querySelectorAll('.close-dialog')) close.onclick = () => close.closest('dialog').close();
-$('#privacy-button').onclick = () => $('#privacy-dialog').showModal();
+$('#privacy-button').onclick = $('#faq-button').onclick = () => $('#privacy-dialog').showModal();
 $('#open-admin').onclick = () => { $('#admin-error').textContent = ''; $('#admin-dialog').showModal(); };
 function setAdmin(admin) { me.admin = admin; $('#admin-login').hidden = admin; $('#admin-controls').hidden = !admin; }
 async function refreshAdminState() {
