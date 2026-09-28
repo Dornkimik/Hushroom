@@ -73,13 +73,37 @@ try {
   await a.locator('#confirm-verification').click(); await b.locator('#confirm-verification').click();
   if (process.env.GROUP_SCREENSHOT_DIR) await a.screenshot({ path: path.join(process.env.GROUP_SCREENSHOT_DIR, 'group-owner-desktop.png'), fullPage: true });
   await closeDetails(b);
+  await closeDetails(a);
+  const image = await a.evaluate(() => {
+    const canvas = document.createElement('canvas'); canvas.width = 160; canvas.height = 100;
+    const context = canvas.getContext('2d'); context.fillStyle = '#426e92'; context.fillRect(0, 0, 160, 100);
+    return canvas.toDataURL('image/png').split(',')[1];
+  });
+  const attach = async page => {
+    assert.equal(await page.locator('#attach-image').isVisible(), true);
+    await page.locator('#image-input').setInputFiles({ name: 'secret-group-image.png', mimeType: 'image/png', buffer: Buffer.from(image, 'base64') });
+    await page.locator('#image-preview').waitFor({ state: 'visible' });
+  };
+  await attach(a); await send(a, 'encrypted group image caption');
+  await b.waitForFunction(() => [...document.querySelectorAll('.private-image')].some(img => img.complete && img.naturalWidth === 160));
+  const firstImage = sent.find(message => message.attachmentId);
+  assert.ok(firstImage); assert.ok(!JSON.stringify(sent).includes('encrypted group image caption')); assert.ok(!JSON.stringify(sent).includes('secret-group-image'));
+  assert.equal((await c.request.get(`${origin}/api/attachments/${firstImage.attachmentId}`)).status(), 404);
+  await a.locator('#group-details').click();
   await a.locator('#group-description').fill('Updated description'); await a.locator('#group-rules').fill('Listen first.');
   await a.selectOption('#group-access', 'open'); await a.locator('#group-save').click();
   await b.waitForFunction(() => document.querySelector('#room-description').textContent === 'Updated description');
   await c.locator('#groups .group-room').click(); await c.locator('#group-join').click();
   await c.waitForFunction(() => !document.querySelector('#message').disabled && document.querySelector('#room-title').textContent === 'Evening circle');
   assert.equal(await c.getByText('encrypted group sentinel', { exact: true }).count(), 0);
+  assert.equal((await c.request.get(`${origin}/api/attachments/${firstImage.attachmentId}`)).status(), 404);
   await send(c, 'hello from new member'); await b.getByText('hello from new member', { exact: true }).waitFor();
+  await attach(b); assert.equal(await b.locator('#message').inputValue(), '');
+  assert.equal(await b.locator('#message').getAttribute('required'), null);
+  await b.locator('.send-button').click();
+  await c.waitForFunction(() => [...document.querySelectorAll('.private-image')].some(img => img.complete && img.naturalWidth === 160));
+  const secondImage = sent.filter(message => message.attachmentId).at(-1);
+  assert.notEqual(firstImage.attachmentId, secondImage.attachmentId);
   await memberRow(a, ub.alias).getByRole('button', { name: 'Make owner', exact: true }).click();
   await a.locator('#group-save').waitFor({ state: 'hidden' });
   assert.equal((await api(a, 'groups/kick', { group, member: uc.id })).status, 403);
@@ -90,6 +114,8 @@ try {
   assert.equal(await c.getByText('hello from new member', { exact: true }).count(), 0);
   assert.equal((await api(c, 'groups/join', { group })).status, 403);
   assert.equal((await api(c, `groups/history?group=${group}`)).status, 403);
+  assert.equal((await c.request.get(`${origin}/api/attachments/${secondImage.attachmentId}`)).status(), 404);
+  assert.equal(await c.locator('.private-image').count(), 0);
   await closeDetails(b); await closeDetails(a);
   await send(b, 'after kick encrypted message'); await a.getByText('after kick encrypted message', { exact: true }).waitFor();
   assert.equal(sent.at(-1).envelopes[uc.id], undefined);
@@ -98,6 +124,10 @@ try {
   assert.ok(rawHistory.every(message => message.envelopes === undefined));
   await a.reload(); await a.locator('#groups .group-room').click();
   await a.getByText('after kick encrypted message', { exact: true }).waitFor();
+  await a.waitForFunction(() => [...document.querySelectorAll('.private-image')].filter(img => img.complete && img.naturalWidth === 160).length === 2);
+  await b.locator(`#message-${firstImage.id}`).getByRole('button', { name: 'Remove', exact: true }).click();
+  await a.locator(`#message-${firstImage.id}`).waitFor({ state: 'detached' });
+  assert.equal((await a.request.get(`${origin}/api/attachments/${firstImage.attachmentId}`)).status(), 404);
   await b.locator('.chat-message').filter({ hasText: 'encrypted group sentinel' }).getByRole('button', { name: 'Delete', exact: true }).click();
   await a.locator('.reply-quote').filter({ hasText: 'Original message removed' }).waitFor();
   // A changed member key must block sending instead of silently accepting a replacement.
@@ -112,13 +142,14 @@ try {
   await a.waitForFunction(() => document.querySelector('#error').textContent.includes('Encryption identity changed'));
   assert.equal(sent.length, sentBefore);
   await a.unroute('**/api/groups/state?group=*');
-  await b.locator('#group-details').click(); assert.match(await memberRow(b, ub.alias).textContent(), /2 messages sent/);
+  await b.locator('#group-details').click(); assert.match(await memberRow(b, ub.alias).textContent(), /3 messages sent/);
   await b.setViewportSize({ width: 390, height: 844 });
   if (process.env.GROUP_SCREENSHOT_DIR) await b.screenshot({ path: path.join(process.env.GROUP_SCREENSHOT_DIR, 'group-owner-mobile.png'), fullPage: true });
   assert.equal(await b.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   await b.locator('#group-delete').click();
   await a.locator('#groups .group-room').waitFor({ state: 'detached' });
   assert.equal((await api(a, `groups/history?group=${group}`)).status, 404);
+  assert.equal((await a.request.get(`${origin}/api/attachments/${secondImage.attachmentId}`)).status(), 404);
   assert.equal((await api(a, 'session')).data.rooms.length, 3);
   assert.deepEqual(errors, []);
   console.log('PASS: open/invite-only rooms, membership isolation, encrypted delivery and replies, key verification, rules, counts, ownership transfer, kick/rejoin protection, reload, deletion, desktop/mobile layout');

@@ -4,21 +4,74 @@ import { randomUUID } from 'node:crypto';
 import nacl from 'tweetnacl';
 import crypto from '../public/crypto.js';
 import { Groups } from '../lib/groups.mjs';
+import { Attachments } from '../lib/attachments.mjs';
+import { Readable } from 'node:stream';
 
 function setup() {
   let time = Date.now(); const events = [];
   const users = ['a', 'b', 'c', 'd'].map(alias => {
     const identity = nacl.box.keyPair(); return { id: randomUUID(), alias, identity, publicKey: crypto.base64(identity.publicKey), sent: [] };
   });
-  const store = new Groups({ now: () => time, emit: (u, event, data) => events.push({ user: u.id, event, data }), broadcast: () => {},
+  const attachments = new Attachments({ now: () => time });
+  const store = new Groups({ attachments, now: () => time, emit: (u, event, data) => events.push({ user: u.id, event, data }), broadcast: () => {},
     safeUser: u => ({ id: u.id, alias: u.alias, displayAsAdmin: false }), findUser: id => users.find(u => u.id === id) });
   const call = (u, action, input = {}, method = 'POST') => store.handle(method, action, u, input);
   const send = (u, group, text = 'secret group sentinel', replyTo) => {
     const state = call(u, 'state', { group }, 'GET'), id = randomUUID();
     return { group, id, version: state.version, replyTo, envelopes: crypto.encryptGroupMessage({ id, group, version: state.version, sender: u.id, text, replyTo }, u.identity, state.members) };
   };
-  return { store, users, events, call, send, advance: ms => { time += ms; } };
+  return { store, attachments, users, events, call, send, advance: ms => { time += ms; } };
 }
+
+test('group images authenticate descriptors, isolate memberships and clean up with messages and rooms', async () => {
+  const { store, attachments, users: [a,b,c], call, send, advance } = setup();
+  const group = call(a, 'create', { name: 'Images' }).id; call(b, 'join', { group });
+  const plain = new TextEncoder().encode('private group image bytes'), encrypted = crypto.encryptImage(plain);
+  async function upload(room = group, peer = null) {
+    const version = store.get(room).version;
+    return attachments.upload(Readable.from([encrypted.bytes]), a.id, peer, peer ? {} : { group: room, version });
+  }
+  function payload(id, room = group) {
+    const state = call(a, 'state', { group: room }, 'GET'), mid = randomUUID();
+    const image = { id, key: encrypted.key, nonce: encrypted.nonce, type: 'image/webp', width: 1, height: 1, size: plain.length };
+    return { id: mid, group: room, version: state.version, attachmentId: id,
+      envelopes: crypto.encryptGroupMessage({ id: mid, group: room, version: state.version, sender: a.id, text: '', image }, a.identity, state.members) };
+  }
+  const first = await upload();
+  assert.throws(() => attachments.get(first.id, b.id), /unavailable/);
+  const imagePayload = payload(first.id), message = call(a, 'message', imagePayload);
+  assert.equal(call(a, 'message', imagePayload).id, message.id);
+  const received = call(b, 'history', { group }, 'GET')[0];
+  const decoded = crypto.decryptGroupMessage(received, b.id, b.identity, a.publicKey);
+  assert.equal(decoded.text, '');
+  assert.deepEqual(crypto.decryptImage(attachments.get(first.id, b.id).bytes, decoded.image), plain);
+  assert.throws(() => crypto.decryptGroupMessage({ ...received, attachment: { id: 'substituted' } }, b.id, b.identity, a.publicKey), /metadata/);
+  assert.throws(() => crypto.decryptGroupMessage({ ...received, attachment: null }, b.id, b.identity, a.publicKey), /metadata/);
+  assert.throws(() => attachments.get(first.id, c.id), /unavailable/);
+  call(c, 'join', { group }); assert.throws(() => store.checkAttachment(attachments.items.get(first.id), c), /unavailable/);
+  call(a, 'kick', { group, member: b.id }); assert.throws(() => store.checkAttachment(attachments.items.get(first.id), b), /unavailable/);
+  call(a, 'message-delete', { group, id: message.id }); assert.equal(attachments.items.has(first.id), false);
+  const otherRoom = call(a, 'create', { name: 'Other' }).id;
+  const uploadOther = await upload(otherRoom);
+  assert.throws(() => call(a, 'message', payload(uploadOther.id)), /Invalid image/);
+  const dm = await upload(group, c.id);
+  assert.throws(() => call(a, 'message', payload(dm.id)), /Invalid image/);
+  const pending = await upload();
+  assert.throws(() => attachments.claim(pending.id, a.id, null, randomUUID()), /Invalid/);
+  call(c, 'leave', { group }); call(c, 'join', { group });
+  assert.throws(() => call(a, 'message', payload(pending.id)), /membership changed/);
+  const published = await upload(); const posted = call(a, 'message', payload(published.id));
+  call(c, 'leave', { group }); call(c, 'join', { group });
+  assert.throws(() => store.checkAttachment(attachments.items.get(published.id), c), /unavailable/);
+  // Evicting a message also removes its encrypted image bytes.
+  for (let i = 0; i < 100; i++) { advance(10001); call(a, 'message', send(a, group)); }
+  assert.ok(!store.get(group).history.some(m => m.id === posted.id)); assert.equal(attachments.items.has(published.id), false);
+  const finalUpload = await upload(); call(a, 'message', payload(finalUpload.id));
+  call(a, 'delete', { group });
+  assert.equal(attachments.items.has(finalUpload.id), false); assert.equal(attachments.items.has(pending.id), false);
+  const expiring = await upload(otherRoom); call(a, 'message', payload(expiring.id, otherRoom));
+  advance(86400000); assert.throws(() => attachments.get(expiring.id, a.id), /unavailable/);
+});
 test('temporary encrypted rooms enforce invitation, ownership, membership versions, counts and deletion', () => {
   const { store, users: [a,b,c,d], events, call, send } = setup();
   const room = call(a, 'create', { name: 'Test room', description: 'Description', rules: 'Be kind', access: 'invite' });

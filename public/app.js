@@ -173,10 +173,10 @@ function updateComposerState(problem) {
   $('#message').required = !pendingImage;
   $('.send-button').disabled = $('#message').disabled || sending || imagePreparing;
   $('#emoji-toggle').disabled = $('#message').disabled;
-  $('#attach-image').hidden = !privateChat; $('#attach-image').disabled = !ready || sending || imagePreparing;
+  $('#attach-image').hidden = !privateChat && !groupChat; $('#attach-image').disabled = !(groupChat ? groupReady : ready) || sending || imagePreparing;
   $('#verify-identity').disabled = !ready;
   $('#verify-identity').hidden = groupChat;
-  if (groupChat) $('#encryption-status').textContent = problem || (groupReady ? 'End-to-end encrypted · Verify members in Room details · Text only' : encryptionError || 'Preparing room encryption…');
+  if (groupChat) $('#encryption-status').textContent = problem || (groupReady ? 'End-to-end encrypted · Verify members in Room details' : encryptionError || 'Preparing room encryption…');
   if (privateChat) $('#encryption-status').textContent = problem || (ready ? `End-to-end encrypted · ${peerIdentity.verified ? 'Identity verified' : 'Identity not verified'}` : encryptionError || 'Waiting for private encryption…');
 }
 async function decodePrivate(message) {
@@ -227,7 +227,7 @@ function clearPendingImage() {
 $('#attach-image').onclick = () => $('#image-input').click();
 $('#cancel-image').onclick = () => { clearPendingImage(); updateComposerState(); };
 $('#image-input').onchange = async () => {
-  const file = $('#image-input').files[0]; if (!file || !current?.peer) return;
+  const file = $('#image-input').files[0]; if (!file || (!current?.peer && !current?.group)) return;
   clearPendingImage(); const version = imageRevision;
   imagePreparing = true; updateComposerState(); error(); status('Preparing image locally…');
   try {
@@ -262,6 +262,14 @@ function renderPrivateImage(message, content) {
     imageLoads.set(message.id, { promise, controller });
   }
   imageLoads.get(message.id).promise.then(url => { if (version === revision) img.src = url; }).catch(e => { img.hidden = true; note.textContent = e.message; });
+}
+async function uploadEncryptedImage(image, target) {
+  status('Encrypting image…');
+  const encrypted = SilenzaCrypto.encryptImage(new Uint8Array(await image.blob.arrayBuffer()));
+  status('Uploading encrypted image…');
+  const response = await fetch(`/api/attachments?${new URLSearchParams(target)}`, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: encrypted.bytes });
+  const result = await response.json(); if (!response.ok) throw new Error(result.error || 'Could not upload image.');
+  return { id: result.id, key: encrypted.key, nonce: encrypted.nonce, type: image.type, width: image.width, height: image.height, size: image.size };
 }
 async function showVerification(id) {
   if (!id || !encryptionClient) return;
@@ -323,30 +331,26 @@ $('#composer').onsubmit = async event => {
     else if (target.group) {
       if (!encryptionClient) throw new Error(encryptionError || 'Room encryption is unavailable.');
       const state = await api(`groups/state?group=${encodeURIComponent(target.group)}`);
+      const attachment = image ? await uploadEncryptedImage(image, { group: state.id, version: state.version }) : null;
+      uploadId = attachment?.id;
       const id = crypto.randomUUID();
       const envelopes = await encryptionClient.encryptGroup({ id, group: state.id, version: state.version, sender: me.id,
-        text: text.startsWith('//') ? text.slice(1) : text, replyTo: reply?.id || null }, state.members);
-      await receive(await api('groups/message', { group: state.id, version: state.version, id, envelopes, replyTo: reply?.id }));
+        text: text.startsWith('//') ? text.slice(1) : text, replyTo: reply?.id || null, image: attachment }, state.members);
+      await receive(await api('groups/message', { group: state.id, version: state.version, id, envelopes, replyTo: reply?.id, attachmentId: uploadId }));
+      uploadId = null; status('');
+      if (pendingImage === image) clearPendingImage();
     } else if (target.peer) {
       if (!encryptionClient) throw new Error(encryptionError || 'Private encryption is unavailable.');
       const person = await encryptionClient.peer(target.peer);
-      let attachment = null;
-      if (image) {
-        status('Encrypting image…');
-        const encrypted = SilenzaCrypto.encryptImage(new Uint8Array(await image.blob.arrayBuffer()));
-        status('Uploading encrypted image…');
-        const response = await fetch(`/api/attachments?peer=${encodeURIComponent(target.peer)}`, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: encrypted.bytes });
-        const result = await response.json(); if (!response.ok) throw new Error(result.error || 'Could not upload image.');
-        uploadId = result.id;
-        attachment = { id: uploadId, key: encrypted.key, nonce: encrypted.nonce, type: image.type, width: image.width, height: image.height, size: image.size };
-      }
+      const attachment = image ? await uploadEncryptedImage(image, { peer: target.peer }) : null;
+      uploadId = attachment?.id;
       const id = crypto.randomUUID();
       const encrypted = encryptionClient.encrypt({ id, sender: me.id, recipient: target.peer, text: text.startsWith('//') ? text.slice(1) : text, replyTo: reply?.id || null, image: attachment }, person);
       await receive(await api('message', { peer: target.peer, id, encrypted, replyTo: reply?.id, attachmentId: uploadId }));
       uploadId = null; status('');
       if (pendingImage === image) clearPendingImage();
     } else {
-      if (image) throw new Error('Images can only be sent in private chats.');
+      if (image) throw new Error('Images can only be sent in encrypted conversations.');
       await receive(await api('message', { ...target, text: text.startsWith('//') ? text.slice(1) : text, replyTo: reply?.id }));
     }
     if (drafts.get(conversationKey(target)) === draft) drafts.delete(conversationKey(target));

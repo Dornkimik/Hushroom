@@ -57,9 +57,9 @@
     const key = nacl.randomBytes(32), nonce = nacl.randomBytes(24);
     return { bytes: nacl.secretbox(bytes, nonce, key), key: base64(key), nonce: base64(nonce) };
   }
-  function encryptGroupMessage({ id, group, version, sender, text, replyTo = null }, identity, members) {
+  function encryptGroupMessage({ id, group, version, sender, text, replyTo = null, image = null }, identity, members) {
     if (typeof group !== 'string' || !Number.isInteger(version) || version < 1 || !members.some(p => p.id === sender)) throw new Error('Invalid room membership.');
-    const content = validateContent({ v: 1, text, replyTo, image: null });
+    const content = validateContent({ v: 1, text, replyTo, image });
     return Object.fromEntries(members.map(person => {
       const value = { ...content, kind: 'group', id, group, version, sender, recipient: person.id };
       const nonce = nacl.randomBytes(24);
@@ -72,8 +72,8 @@
     if (!bytes) throw new Error('This room message could not be authenticated.');
     const value = validateContent(decode(bytes));
     if (value.kind !== 'group' || value.id !== message.id || value.group !== message.group || value.version !== message.version ||
-        value.sender !== message.sender || value.recipient !== ownId || value.replyTo !== (message.reply?.id || null) || value.image !== null) throw new Error('Room message metadata did not match.');
-    return { text: value.text };
+        value.sender !== message.sender || value.recipient !== ownId || value.replyTo !== (message.reply?.id || null) || (value.image?.id || null) !== (message.attachment?.id || null)) throw new Error('Room message metadata did not match.');
+    return { text: value.text, image: value.image };
   }
   function decryptImage(bytes, image) {
     if (bytes.length !== image.size + 16) throw new Error('Invalid encrypted image size.');

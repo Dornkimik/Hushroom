@@ -41,7 +41,7 @@ const roomList = () => rooms.map(r => ({ ...r, count: [...sessions.values()].fil
 const publishRooms = () => broadcast('rooms', roomList());
 const publicSession = s => ({ ...safeUser(s), admin: s.adminUntil > Date.now() });
 const publishAppearance = s => { emit(s, 'session', publicSession(s)); broadcast('appearance', safeUser(s)); presence(); };
-const groups = new Groups({ emit, broadcast, safeUser, findUser: id => [...sessions.values()].find(s => s.id === id) });
+const groups = new Groups({ emit, broadcast, safeUser, attachments, findUser: id => [...sessions.values()].find(s => s.id === id) });
 const keyFor = (s, room, peer) => peer ? `dm:${[s.id, peer].sort().join(':')}` : `room:${room}`;
 let saveQueue = Promise.resolve();
 function saveBans() {
@@ -120,6 +120,17 @@ const server = http.createServer(async (req, res) => {
       json({ id: peer.id, publicKey: peer.publicKey }); return;
     }
     if (url.pathname === '/api/attachments' && req.method === 'POST') {
+      if (url.searchParams.has('group')) {
+        const group = groups.get(url.searchParams.get('group')), version = Number(url.searchParams.get('version'));
+        groups.member(group, session);
+        if (!session.publicKey || version !== group.version) fail(409, 'Room membership changed. Try sending again.');
+        if (req.headers['content-type'] !== 'application/octet-stream') fail(415, 'Upload encrypted image bytes only.');
+        const uploaded = await attachments.upload(req, session.id, null, { group: group.id, version });
+        if (sessions.get(token) !== session || groups.rooms.get(group.id) !== group || group.updated + 86400000 <= Date.now() || !group.members.has(session.id) || group.version !== version) {
+          attachments.remove(uploaded.id); fail(409, 'Room membership changed during upload. Try sending again.');
+        }
+        json(uploaded); return;
+      }
       const peer = [...sessions.values()].find(s => s.id === url.searchParams.get('peer'));
       if (!peer || peer.id === session.id) fail(404, 'That person is no longer available.');
       if (!session.publicKey || !peer.publicKey) fail(409, 'Both people need encryption identities before uploading.');
@@ -131,6 +142,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname.startsWith('/api/attachments/')) {
       const id = url.pathname.slice('/api/attachments/'.length), item = attachments.get(id, session.id);
+      if (item.group && req.method === 'GET') groups.checkAttachment(item, session);
       if (req.method === 'GET') {
         res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': item.bytes.length, 'Cache-Control': 'no-store', 'Content-Disposition': 'attachment' }); res.end(item.bytes); return;
       }
