@@ -1,6 +1,6 @@
 # SilenzaChat
 
-An anonymous chatroom for live public conversations and private, end-to-end encrypted chats. Visitors do not need an account, email address, or real name.
+An anonymous chatroom for live public conversations and private, end-to-end encrypted chats. Visitors do not need an account, email address, or real name. https://silenzachat.cc
 
 ## Visitor guide
 
