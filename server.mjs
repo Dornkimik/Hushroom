@@ -105,7 +105,7 @@ const server = http.createServer(async (req, res) => {
     session.seen = Date.now();
     if (url.pathname === '/api/identity' && req.method === 'GET') {
       const peer = [...sessions.values()].find(s => s.id === url.searchParams.get('peer'));
-      if (!peer?.publicKey) fail(409, 'This person has not enabled private encryption yet. They need to open or refresh Hushroom.');
+      if (!peer?.publicKey) fail(409, 'This person has not enabled private encryption yet. They need to open or refresh SilenzaChat.');
       json({ id: peer.id, publicKey: peer.publicKey }); return;
     }
     if (url.pathname === '/api/attachments' && req.method === 'POST') {
@@ -291,6 +291,6 @@ setInterval(() => {
   for (const [ip, a] of attempts) if (Date.now() > a.reset) attempts.delete(ip);
 }, 60000).unref();
 server.listen(Number(process.env.PORT || 3000), process.env.HOST || '127.0.0.1', () => {
-  console.log(`Hushroom is running at ${process.env.ORIGIN || `http://localhost:${process.env.PORT || 3000}`}`);
+  console.log(`SilenzaChat is running at ${process.env.ORIGIN || `http://localhost:${process.env.PORT || 3000}`}`);
   if (!process.env.ADMIN_PASSWORD) console.log(`Temporary admin password: ${password}`);
 });

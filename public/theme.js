@@ -2,7 +2,7 @@
   const key = 'hushroom-theme';
   const system = window.matchMedia('(prefers-color-scheme: dark)');
   const valid = value => ['light', 'dark', 'system'].includes(value);
-  let preference = 'system';
+  let preference = 'dark';
   try {
     const saved = localStorage.getItem(key);
     if (valid(saved)) preference = saved;

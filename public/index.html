@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="description" content="A little less noise. A little more conversation. Anonymous rooms and private chats.">
-  <title>Hushroom — A little company</title>
+  <title>SilenzaChat — Quietly together</title>
   <script src="/theme.js"></script>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/style.css">
   <script src="/vendor/nacl.js" defer></script>
@@ -13,8 +13,8 @@
 <body>
   <div class="app">
     <aside class="sidebar">
-      <a class="brand" href="/" aria-label="Hushroom home"><span class="brand-icon">h<span>•</span></span>hushroom<span class="brand-dot">.</span></a>
-      <div class="sidebar-intro">A little space to connect.</div>
+      <a class="brand" href="/" aria-label="SilenzaChat home"><span class="brand-icon">s<span>+</span></span>silenza<span class="brand-dot">chat</span></a>
+      <div class="sidebar-intro">Quiet rooms. Real connection.</div>
       <div class="section-label">Rooms <span id="room-count">0</span></div>
       <nav id="rooms" aria-label="Chat rooms"></nav>
       <div class="section-label dm-label">Private chats <span>↗</span></div>
@@ -72,13 +72,13 @@
       <details><summary>How long do images and messages stay available?</summary><p>Only the latest 100 messages in each conversation are kept in server memory. They disappear when the server restarts. Anonymous sessions and their private history expire after 24 hours offline.</p><p>Sent images expire within 24 hours of upload; the host can set a shorter lifetime. Images also disappear when their message is deleted or leaves recent history, either participant is banned or their session expires, or the server restarts. Unsent uploads expire within 10 minutes. This is a temporary chat, not a backup or permanent inbox.</p></details>
       <details><summary>Can I delete a message I sent?</summary><p>Yes. Choose <strong>Delete</strong> on your own public or private message. It is removed from the conversation for everyone, along with any attached image. Replies show that the original message was removed. You do not need admin access.</p><p>Deletion cannot erase screenshots, downloads, or copies someone has already made. Automatic expiry has the same limit.</p></details>
       <details><summary>Can anyone open a link to my private image?</summary><p>The app does not create public image links. Downloads require an authorized browser session belonging to a participant, and the downloaded bytes are still encrypted. Your recipient can nevertheless save the decrypted image or share a copy.</p></details>
-      <details><summary>Can someone receive a private message while offline?</summary><p>Yes, if they have already opened Hushroom and set up their browser’s encryption identity. They can read it when they return while their session and recent message history are still available. Images must also be within their expiry period. A server restart clears waiting messages and images.</p></details>
+      <details><summary>Can someone receive a private message while offline?</summary><p>Yes, if they have already opened SilenzaChat and set up their browser’s encryption identity. They can read it when they return while their session and recent message history are still available. Images must also be within their expiry period. A server restart clears waiting messages and images.</p></details>
     </section>
     <section class="faq-section" aria-labelledby="faq-using">
-      <h3 id="faq-using">Using Hushroom</h3>
+      <h3 id="faq-using">Using SilenzaChat</h3>
       <details><summary>How do I start a private chat or send an image?</summary><p>Choose someone under <strong>In good company</strong>. On a phone, the people list is below the chat. Private conversations appear in the sidebar.</p><p>In a private chat, use <strong>＋</strong> to choose a JPEG, PNG, or WebP image, add an optional caption, then send. Images can only be sent privately. The input limit is 12 MB and 32 megapixels; images are resized to at most 2048 pixels on the longest edge and must fit within 4 MB after preparation.</p></details>
       <details><summary>What happens if I refresh, clear browser data, or use another device?</summary><p>Refreshing normally keeps your session and local encryption keys. Tabs in the same browser profile share them. Another browser, browser profile, or device has a separate identity; there is no account sync.</p><p>Clearing site data or ending an incognito session can lose your session and encryption keys. The server cannot recover those keys. If your session remains but its key is lost, private chat is blocked; clear the site’s data to start a new anonymous session.</p></details>
-      <details><summary>Why is private chat unavailable?</summary><p>Private chat needs HTTPS, or localhost for local use, and browser storage for encryption keys. Both people need to open the current version of Hushroom. If encryption cannot be set up, the app blocks private sending instead of sending plaintext.</p><p>If you see an identity-change warning, do not assume it is safe to continue. Contact the other person through a trusted channel. A new anonymous session has a new identity and needs to be verified again.</p></details>
+      <details><summary>Why is private chat unavailable?</summary><p>Private chat needs HTTPS, or localhost for local use, and browser storage for encryption keys. Both people need to open the current version of SilenzaChat. If encryption cannot be set up, the app blocks private sending instead of sending plaintext.</p><p>If you see an identity-change warning, do not assume it is safe to continue. Contact the other person through a trusted channel. A new anonymous session has a new identity and needs to be verified again.</p></details>
       <details><summary>What is stored in my browser?</summary><p>A session cookie lets the server recognize your anonymous session. Encryption keys and remembered peer identities are stored locally in the browser. The app also saves your theme preference. Decrypted messages and unsent drafts stay in the current page’s memory; the app does not save a permanent local chat archive.</p></details>
       <details><summary>How do replies, mentions, and moderation work?</summary><p>Choose <strong>Reply</strong> on a message to respond to it. Type <strong>@</strong> and choose an alias to mention someone. The emoji button opens a searchable picker, and <strong>/help</strong> lists chat commands.</p><p>Admins can manage rooms, ban anonymous sessions, and remove messages by ID. Those controls do not give them a key to decrypt other people’s private chats. A session ban affects that browser session; it cannot prevent someone from returning with a new identity.</p></details>
     </section>

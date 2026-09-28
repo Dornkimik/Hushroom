@@ -1,4 +1,4 @@
-# Hushroom
+# SilenzaChat
 
 An anonymous chatroom website with live public rooms, private conversations, and password-protected room management. All source files are included. No visitor accounts are required. Browser encryption uses a pinned, locally served TweetNaCl dependency.
 
