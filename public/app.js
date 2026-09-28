@@ -51,7 +51,7 @@ function updateHeading() {
   $('#message').placeholder = privateChat ? 'Say something, just to them…' : 'Leave a little thought…';
   $('#message').disabled = !current; $('.send-button').disabled = !current;
   $('#welcome h2').textContent = privateChat ? 'A little more personal.' : 'Make yourself at home.';
-  $('#welcome p').textContent = privateChat ? 'One conversation. Just the two of you.\nA simple hello is a good place to start.' : 'Big thoughts, small talk, or just a hello. There’s room for all of it here.';
+  $('#welcome p').textContent = privateChat ? 'One conversation. Just the two of you.\nA simple hello is a good place to start.' : 'No introductions needed. A simple hello is a good place to start.';
 }
 function matches(message, target = current) { return target && (target.peer ? !message.room && ((message.sender === me.id && message.recipient === target.peer) || (message.sender === target.peer && message.recipient === me.id)) : message.room === target.room); }
 async function select(target) {

@@ -4,6 +4,7 @@
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="description" content="A little less noise. A little more conversation. Anonymous rooms and private chats.">
   <title>Hushroom — A little company</title>
+  <script src="/theme.js"></script>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/style.css">
   <script src="/app.js" defer></script>
 </head>
@@ -11,23 +12,23 @@
   <div class="app">
     <aside class="sidebar">
       <a class="brand" href="/" aria-label="Hushroom home"><span class="brand-icon">h<span>•</span></span>hushroom<span class="brand-dot">.</span></a>
-      <div class="sidebar-intro">Good company.<br>No introductions needed.</div>
-      <div class="section-label">THE ROOMS <span id="room-count">0</span></div>
+      <div class="sidebar-intro">A little space to connect.</div>
+      <div class="section-label">Rooms <span id="room-count">0</span></div>
       <nav id="rooms" aria-label="Chat rooms"></nav>
-      <div class="section-label dm-label">PRIVATE CHATS <span>↗</span></div>
+      <div class="section-label dm-label">Private chats <span>↗</span></div>
       <nav id="dms" aria-label="Private conversations"></nav>
-      <p class="aside-hint" id="dm-hint">Find someone on the right.<br>Start a conversation.</p>
+      <p class="aside-hint" id="dm-hint">Choose someone online to start a private chat.</p>
       <div class="sidebar-bottom">
         <button class="admin-link" id="open-admin"><span>◇</span> Room management <span>↗</span></button>
         <div class="identity"><span class="avatar me-avatar">?</span><div><strong id="my-alias">Finding your alias…</strong><small>Your anonymous identity</small></div></div>
       </div>
     </aside>
     <main>
-      <header class="topbar"><div class="breadcrumb">YOUR LITTLE CORNER OF THE INTERNET</div><span class="connection" id="connection">Connecting…</span></header>
+      <header class="topbar"><span class="connection" id="connection">Connecting…</span><div class="theme-control"><label class="sr-only" for="theme-select">Color theme</label><select id="theme-select" aria-label="Color theme"><option value="system">System theme</option><option value="light">Light theme</option><option value="dark">Dark theme</option></select></div></header>
       <section class="room-heading"><div class="room-symbol" id="room-symbol">#</div><div><div class="eyebrow" id="conversation-type">COME AS YOU ARE</div><h1 id="room-title">The living room</h1><p id="room-description">A little company. A good conversation.</p></div><span class="room-badge" id="room-badge">OPEN ROOM</span></section>
       <div class="chat-scroll" id="chat-scroll">
-        <div class="welcome" id="welcome"><div class="welcome-mark">✳</div><h2>Make yourself at home.</h2><p>Big thoughts, small talk, or just a hello.<br>There’s room for all of it here.</p><div class="welcome-pills"><span>No accounts</span><span>Just conversation</span></div></div>
-        <div class="day-divider"><span>HERE & NOW</span></div>
+        <div class="welcome" id="welcome"><h2>Make yourself at home.</h2><p>No introductions needed.<br>A simple hello is a good place to start.</p></div>
+        <div class="day-divider"><span>Conversation</span></div>
         <div id="messages" role="log" aria-live="polite" aria-label="Chat messages"></div>
         <p class="empty-chat" id="empty-chat">It’s quiet in here. Be the first to say hello.</p>
       </div>
