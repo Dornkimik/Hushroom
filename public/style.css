@@ -199,3 +199,14 @@ dialog input { width: 100%; padding: 12px; border: 1px solid var(--line); border
 #emoji-grid button { min-height: 40px; background: transparent; border-radius: 5px; font-size: 24px; }
 #emoji-grid p { grid-column: 1 / -1; color: var(--muted); }
 #command-status { color: var(--accent); font-size: 12px; line-height: 1.6; }
+
+#attach-image { flex-shrink: 0; width: 36px; height: 36px; background: var(--panel); color: var(--accent); border-radius: 7px; font-size: 24px; }
+#verify-identity { background: transparent; color: var(--accent); text-decoration: underline; padding: 4px; }
+#image-preview { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; padding: 8px; background: var(--panel); border-radius: 8px; }
+#image-preview img { width: 64px; height: 64px; object-fit: contain; border-radius: 5px; }
+#image-preview span { flex: 1; font-size: 12px; color: var(--muted); }
+#image-preview button { padding: 8px; background: transparent; font-size: 24px; }
+.private-image { display: block; max-width: min(100%, 420px); height: auto; max-height: 420px; object-fit: contain; border-radius: 8px; margin-top: 8px; }
+.image-note { color: var(--muted); font-size: 11px; }
+#verification-code { white-space: pre-wrap; overflow-wrap: anywhere; padding: 16px; background: var(--panel); border-radius: 8px; line-height: 1.8; }
+@media (max-width: 600px) { #composer { gap: 5px; padding-left: 10px; } }

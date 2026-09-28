@@ -1,0 +1,88 @@
+import { chromium } from 'playwright';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { mkdtemp, rm } from 'node:fs/promises';
+import net from 'node:net';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { tmpdir } from 'node:os';
+import assert from 'node:assert/strict';
+const root = fileURLToPath(new URL('..', import.meta.url));
+const data = await mkdtemp(path.join(tmpdir(), 'hushroom-browser-'));
+const probe = net.createServer(); probe.listen(0,'127.0.0.1'); await once(probe,'listening'); const port = probe.address().port; await new Promise(r=>probe.close(r));
+const origin = `http://127.0.0.1:${port}`;
+const server = spawn(process.execPath,['server.mjs'],{cwd:root,env:{...process.env,DATA_DIR:data,PORT:String(port),HOST:'127.0.0.1',ORIGIN:origin,ADMIN_PASSWORD:'browser-test-only'},stdio:['ignore','pipe','pipe']});
+let browser; const errors=[];
+try {
+  await once(server.stdout,'data');
+  browser = await chromium.launch({executablePath:process.env.CHROMIUM_PATH || undefined,headless:true,args:['--no-sandbox']});
+  const [ac,bc,cc] = await Promise.all([browser.newContext({ reducedMotion: 'reduce' }),browser.newContext({ reducedMotion: 'reduce' }),browser.newContext({ reducedMotion: 'reduce' })]);
+  const [a,b,c] = await Promise.all([ac.newPage(),bc.newPage(),cc.newPage()]);
+  const sent=[];
+  for(const page of [a,b,c]) { page.on('pageerror',e=>errors.push(e.message)); page.on('request',r=>{if(r.url().endsWith('/api/message') && r.method()==='POST') sent.push(r.postDataJSON());}); }
+  await Promise.all([a.goto(origin),b.goto(origin),c.goto(origin)]);
+  for(const page of [a,b,c]) await page.waitForFunction(()=>document.querySelector('#connection').textContent==='Connected');
+  const aliasA=await a.locator('#my-alias').textContent(), aliasB=await b.locator('#my-alias').textContent();
+  await a.locator('#people .person').filter({hasText:aliasB}).click();
+  await a.waitForFunction(()=>document.querySelector('#encryption-status').textContent.includes('End-to-end encrypted'));
+  await a.locator('#message').fill('private sentinel caption'); await a.locator('.send-button').click();
+  await b.locator('#dms .dm-room').filter({hasText:aliasA}).click();
+  await b.getByText('private sentinel caption',{exact:true}).waitFor();
+  assert.equal(sent[0].text,undefined); assert.ok(sent[0].encrypted); assert.ok(!JSON.stringify(sent[0]).includes('private sentinel caption'));
+  // Reload and another tab reuse the local identity.
+  await b.reload(); await b.locator('#dms .dm-room').filter({hasText:aliasA}).click(); await b.getByText('private sentinel caption',{exact:true}).waitFor();
+  const tab=await ac.newPage(); await tab.goto(origin); await tab.locator('#dms .dm-room').filter({hasText:aliasB}).click(); await tab.getByText('private sentinel caption',{exact:true}).waitFor(); await tab.close();
+  await a.locator('#verify-identity').click(); await b.locator('#verify-identity').click();
+  await a.locator('#verify-dialog').waitFor({state:'visible'}); await b.locator('#verify-dialog').waitFor({state:'visible'});
+  assert.equal(await a.locator('#verification-code').textContent(),await b.locator('#verification-code').textContent());
+  await a.locator('#confirm-verification').click(); await b.locator('#confirm-verification').click();
+  assert.match(await a.locator('#encryption-status').textContent(),/Identity verified/);
+  // Encrypt a locally generated raster image. The original filename must never leave the browser.
+  const image=await a.evaluate(()=>{const canvas=document.createElement('canvas');canvas.width=160;canvas.height=100;const ctx=canvas.getContext('2d');ctx.fillStyle='#326b50';ctx.fillRect(0,0,160,100);return canvas.toDataURL('image/png').split(',')[1];});
+  await a.locator('#image-input').setInputFiles({name:'private-filename.png',mimeType:'image/png',buffer:Buffer.from(image,'base64')});
+  await a.locator('#image-preview').waitFor({state:'visible'});
+  await a.locator('#message').fill('secret image caption'); await a.locator('.send-button').click();
+  await b.waitForFunction(()=>{const img=document.querySelector('.private-image');return img?.complete && img.naturalWidth===160;});
+  assert.ok(!JSON.stringify(sent).includes('secret image caption')); assert.ok(!JSON.stringify(sent).includes('private-filename'));
+  const imageMessage=sent.find(m=>m.attachmentId); assert.ok(imageMessage);
+  const unauthorized=await c.request.get(`${origin}/api/attachments/${imageMessage.attachmentId}`); assert.equal(unauthorized.status(),404);
+  // Private reply content is also ciphertext.
+  await b.locator('.chat-message').filter({hasText:'secret image caption'}).getByRole('button',{name:'Reply',exact:true}).click();
+  await b.locator('#message').fill('secret reply'); await b.locator('.send-button').click();
+  await a.getByText('secret reply',{exact:true}).waitFor();
+  assert.ok(!JSON.stringify(sent).includes('secret reply'));
+  await a.screenshot({path:path.join(data, 'private-desktop.png'),fullPage:true});
+  await b.setViewportSize({width:390,height:844}); await b.screenshot({path:path.join(data, 'private-mobile.png'),fullPage:true});
+  // An attachment can be sent with no caption (the textarea is not required).
+  await a.locator('#image-input').setInputFiles({name:'image-only.png',mimeType:'image/png',buffer:Buffer.from(image,'base64')});
+  await a.locator('#image-preview').waitFor({state:'visible'}); assert.equal(await a.locator('#message').inputValue(), '');
+  await a.locator('.send-button').click();
+  await b.waitForFunction(()=>[...document.querySelectorAll('.private-image')].filter(img=>img.complete && img.naturalWidth===160).length===2);
+  // Private drafts must not appear in public room composers.
+  await a.locator('#message').fill('unsent private draft');
+  await a.locator('#rooms .nav-room').first().click(); assert.equal(await a.locator('#message').inputValue(), '');
+  await a.locator('#dms .dm-room').filter({hasText:aliasB}).click();
+  await a.waitForFunction(()=>document.querySelector('#message').disabled===false);
+  assert.equal(await a.locator('#message').inputValue(), 'unsent private draft'); await a.locator('#message').fill('');
+  // Offline recipients can decrypt later without either browser uploading a private key.
+  await b.close(); await a.locator('#message').fill('delivered while offline'); await a.locator('.send-button').click();
+  await a.getByText('delivered while offline', {exact:true}).waitFor();
+  const returned=await bc.newPage(); returned.on('pageerror',e=>errors.push(e.message)); await returned.goto(origin);
+  await returned.locator('#dms .dm-room').filter({hasText:aliasA}).click(); await returned.getByText('delivered while offline',{exact:true}).waitFor();
+  assert.match(await returned.locator('#encryption-status').textContent(), /Identity verified/);
+  // A substituted public key must block the conversation instead of silently trusting it.
+  const substitute=await c.evaluate(()=>btoa(String.fromCharCode(...nacl.box.keyPair().publicKey)));
+  await a.route('**/api/identity?peer=*',async route=>{ const response=await route.fetch(); const data=await response.json(); await route.fulfill({json:{...data,publicKey:substitute}}); });
+  await a.locator('#rooms .nav-room').first().click(); await a.locator('#dms .dm-room').filter({hasText:aliasB}).click();
+  await a.waitForFunction(()=>document.querySelector('#error').textContent.includes('Encryption identity changed'));
+  assert.equal(await a.locator('#message').isDisabled(),true);
+  // Losing a local key does not silently replace the registered key.
+  await returned.evaluate(async()=>{await new Promise((resolve,reject)=>{const r=indexedDB.open('hushroom-private-v1');r.onsuccess=()=>{const tx=r.result.transaction('identities','readwrite');tx.objectStore('identities').clear();tx.oncomplete=resolve;tx.onerror=reject;};});});
+  await returned.reload(); await returned.locator('#dms .dm-room').filter({hasText:aliasA}).click();
+  await returned.waitForFunction(()=>document.querySelector('#error').textContent.includes('local encryption key does not match'));
+  assert.equal(await returned.locator('#message').isDisabled(),true);
+  assert.deepEqual(errors,[]);
+  console.log('PASS: private text, encrypted image, replies, third-party isolation, reload, shared-tab keys, matching verification codes, offline delivery, key-change/key-loss blocking, private draft isolation, desktop/mobile rendering');
+} finally {
+  await browser?.close(); server.kill(); await once(server,'exit'); await rm(data,{recursive:true,force:true});
+}

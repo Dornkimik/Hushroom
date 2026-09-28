@@ -10,9 +10,9 @@
     <NodeExeArguments>--env-file-if-exists=.env</NodeExeArguments>
   </PropertyGroup>
   <ItemGroup>
-    <Content Include="server.mjs"/><Content Include="package.json"/>
+    <Content Include="server.mjs"/><Content Include="lib\attachments.mjs"/><Content Include="package.json"/>
     <Content Include="public\index.html"/><Content Include="public\style.css"/>
-    <Content Include="public\app.js"/><Content Include="public\favicon.svg"/>
+    <Content Include="public\app.js"/><Content Include="public\crypto.js"/><Content Include="public\private.js"/><Content Include="public\favicon.svg"/>
     <Content Include="README.md"/><Content Include=".env.example"/>
     <Content Include="test\chat.test.mjs"/>
   </ItemGroup>

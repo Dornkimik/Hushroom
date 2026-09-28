@@ -1,7 +1,10 @@
 const $ = selector => document.querySelector(selector);
 let me, rooms = [], people = [], adminBans = [], current, messages = [], stream, revision = 0, deleting, banning;
 let replying, sending = false, suggestions = [], suggestionIndex = 0, completionStart = 0;
-const conversations = new Map(), unread = new Map();
+let encryptionClient, encryptionError = '', peerIdentity, pendingImage, imagePreparing = false, imageRevision = 0, verificationTarget;
+const imageURLs = new Map(), imageLoads = new Map();
+const conversations = new Map(), unread = new Map(), drafts = new Map();
+const conversationKey = target => target ? `${target.peer ? 'peer' : 'room'}:${target.peer || target.room}` : '';
 async function api(url, data) {
   const response = await fetch(`/api/${url}`, data === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
   const result = await response.json();
@@ -50,24 +53,36 @@ function updateHeading() {
   $('#room-badge').textContent = privateChat ? 'PRIVATE CHAT' : 'OPEN ROOM';
   $('#private-note').hidden = !privateChat;
   $('#message').placeholder = privateChat ? 'Say something, just to them…' : 'Leave a little thought…';
-  $('#message').disabled = !current; $('.send-button').disabled = !current || sending; $('#emoji-toggle').disabled = !current;
+  updateComposerState();
   $('#welcome h2').textContent = privateChat ? 'A little more personal.' : 'Make yourself at home.';
   $('#welcome p').textContent = privateChat ? 'One conversation. Just the two of you.\nA simple hello is a good place to start.' : 'No introductions needed. A simple hello is a good place to start.';
 }
 function matches(message, target = current) { return target && (target.peer ? !message.room && ((message.sender === me.id && message.recipient === target.peer) || (message.sender === target.peer && message.recipient === me.id)) : message.room === target.room); }
 async function select(target) {
   setReply(null); closeSuggestions(); toggleEmoji(false);
+  if (conversationKey(target) !== conversationKey(current)) {
+    if (current) drafts.set(conversationKey(current), $('#message').value);
+    $('#message').value = drafts.get(conversationKey(target)) || ''; resizeComposer();
+    clearPendingImage(); status('');
+  }
+  clearImageURLs(); peerIdentity = null;
   current = target; const version = ++revision; messages = []; error();
   if (target?.peer) unread.delete(target.peer);
   renderRooms(); renderDMs(); updateHeading(); renderMessages();
   if (!target) return;
   try {
+    if (target.peer) {
+      if (!encryptionClient) throw new Error(encryptionError || 'Private encryption is unavailable.');
+      const person = await encryptionClient.peer(target.peer);
+      if (version !== revision) return;
+      peerIdentity = person; updateComposerState();
+    }
     if (target.room) await api('join', target);
-    const history = await api(`history?${new URLSearchParams(target)}`);
+    const history = await Promise.all((await api(`history?${new URLSearchParams(target)}`)).map(decodePrivate));
     if (version !== revision) return;
     messages = [...new Map([...history, ...messages].map(m => [m.id, m])).values()].sort((a,b) => a.time.localeCompare(b.time)).slice(-100);
     renderMessages();
-  } catch (e) { if (version === revision) error(e.message); }
+  } catch (e) { if (version === revision) { error(e.message); if (target.peer) { peerIdentity = null; updateComposerState(e.message); } } }
 }
 function renderMessages() {
   $('#messages').replaceChildren(...messages.map(message => {
@@ -79,7 +94,7 @@ function renderMessages() {
     row.id = `message-${message.id}`;
     if (message.mentions?.some(person => person.id === me.id)) row.classList.add('mentioned');
     const replyButton = element('button', 'message-reply', 'Reply');
-    replyButton.type = 'button'; replyButton.onclick = () => { setReply(message); $('#message').focus(); };
+    replyButton.type = 'button'; replyButton.disabled = Boolean(message.locked); replyButton.onclick = () => { setReply(message); $('#message').focus(); };
     meta.append(replyButton);
     if (me?.admin) {
       const remove = element('button', 'message-remove', 'Remove');
@@ -88,8 +103,9 @@ function renderMessages() {
       meta.append(remove);
     }
     content.append(meta);
-    if (message.reply) {
-      const quote = element('button', 'reply-quote', message.reply.removed ? 'Original message removed' : `${message.reply.alias}: ${message.reply.text}`);
+    if (message.reply && !message.locked) {
+      const original = message.encrypted ? messages.find(m => m.id === message.reply.id && !m.locked) : message.reply;
+      const quote = element('button', 'reply-quote', message.reply.removed ? 'Original message removed' : original ? `${original.alias}: ${original.text || 'Image'}` : 'Original message unavailable');
       quote.type = 'button'; quote.disabled = message.reply.removed;
       quote.onclick = () => { const original = document.getElementById(`message-${message.reply.id}`); if (original) { original.scrollIntoView({ block: 'center' }); original.tabIndex = -1; original.focus({ preventScroll: true }); } else error('The original message is no longer in the recent history.'); };
       content.append(quote);
@@ -99,21 +115,130 @@ function renderMessages() {
       body.append(document.createTextNode(message.text.slice(offset, mention.start)), element('mark', 'mention', message.text.slice(mention.start, mention.end)));
       offset = mention.end;
     }
-    body.append(document.createTextNode(message.text.slice(offset))); content.append(body); row.append(avatar(message.alias, own), content); return row;
+    body.append(document.createTextNode(message.text.slice(offset))); content.append(body);
+    if (message.image && !message.locked) renderPrivateImage(message, content);
+    row.append(avatar(message.alias, own), content); return row;
   }));
   $('#empty-chat').hidden = messages.length > 0 || !current;
   $('#welcome').hidden = messages.length > 3;
   $('#chat-scroll').scrollTop = $('#chat-scroll').scrollHeight;
 }
-function receive(message) {
+async function receive(message) {
   if (!message.room) {
     const peer = message.sender === me.id ? message.recipient : message.sender;
     if (!conversations.has(peer)) conversations.set(peer, people.find(p => p.id === peer)?.alias || message.alias);
     if (current?.peer !== peer && message.sender !== me.id) unread.set(peer, (unread.get(peer) || 0) + 1);
     renderDMs();
   }
-  if (matches(message) && !messages.some(m => m.id === message.id)) { messages = [...messages, message].slice(-100); renderMessages(); }
+  if (matches(message) && !messages.some(m => m.id === message.id)) {
+    const version = revision;
+    messages = [...messages, message.encrypted ? { ...message, text: 'Decrypting…', locked: true } : message].slice(-100); renderMessages();
+    if (message.encrypted) {
+      const decoded = await decodePrivate(message);
+      if (version !== revision) return;
+      messages = messages.map(m => m.id === message.id ? { ...decoded, reply: m.reply } : m); renderMessages();
+    }
+    for (const id of new Set([...imageURLs.keys(), ...imageLoads.keys()])) if (!messages.some(m => m.id === id)) revokeImage(id);
+  }
 }
+function updateComposerState(problem) {
+  const privateChat = Boolean(current?.peer), ready = Boolean(encryptionClient && peerIdentity?.id === current?.peer);
+  $('#message').disabled = !current || (privateChat && !ready);
+  $('#message').required = !pendingImage;
+  $('.send-button').disabled = !current || sending || imagePreparing || (privateChat && !ready);
+  $('#emoji-toggle').disabled = $('#message').disabled;
+  $('#attach-image').hidden = !privateChat; $('#attach-image').disabled = !ready || sending || imagePreparing;
+  $('#verify-identity').disabled = !ready;
+  if (privateChat) $('#encryption-status').textContent = problem || (ready ? `End-to-end encrypted · ${peerIdentity.verified ? 'Identity verified' : 'Identity not verified'}` : encryptionError || 'Waiting for private encryption…');
+}
+async function decodePrivate(message) {
+  if (message.room) return message;
+  try {
+    if (!encryptionClient) throw new Error(encryptionError || 'Private encryption is unavailable.');
+    const id = message.sender === me.id ? message.recipient : message.sender;
+    const person = peerIdentity?.id === id ? peerIdentity : await encryptionClient.peer(id);
+    const plain = encryptionClient.decrypt(message, person);
+    const mentions = [];
+    for (const user of [me, { id, alias: conversations.get(id) || people.find(p => p.id === id)?.alias }]) {
+      if (!user.alias) continue;
+      const tag = `@${user.alias}`; let start = plain.text.indexOf(tag);
+      while (start !== -1) {
+        const end = start + tag.length;
+        if ((!start || /\s/.test(plain.text[start - 1])) && (end === plain.text.length || /[\s.,!?;:()]/.test(plain.text[end]))) mentions.push({ id: user.id, start, end });
+        start = plain.text.indexOf(tag, end);
+      }
+    }
+    return { ...message, ...plain, mentions: mentions.sort((a, b) => a.start - b.start) };
+  } catch(e) { return { ...message, text: e.message, locked: true }; }
+}
+function revokeImage(id) {
+  if (imageURLs.has(id)) URL.revokeObjectURL(imageURLs.get(id)); imageURLs.delete(id);
+  imageLoads.get(id)?.controller.abort(); imageLoads.delete(id);
+}
+function clearImageURLs() { for (const id of new Set([...imageURLs.keys(), ...imageLoads.keys()])) revokeImage(id); }
+function clearPendingImage() {
+  imageRevision++; imagePreparing = false;
+  if (pendingImage?.url) URL.revokeObjectURL(pendingImage.url);
+  pendingImage = null; $('#image-preview').hidden = true; $('#image-preview img').removeAttribute('src'); $('#image-input').value = ''; $('#message').required = true;
+}
+$('#attach-image').onclick = () => $('#image-input').click();
+$('#cancel-image').onclick = () => { clearPendingImage(); updateComposerState(); };
+$('#image-input').onchange = async () => {
+  const file = $('#image-input').files[0]; if (!file || !current?.peer) return;
+  clearPendingImage(); const version = imageRevision;
+  imagePreparing = true; updateComposerState(); error(); status('Preparing image locally…');
+  try {
+    const image = await HushImages.prepare(file);
+    if (version !== imageRevision) return;
+    pendingImage = { ...image, url: URL.createObjectURL(image.blob) };
+    $('#image-preview img').src = pendingImage.url;
+    $('#image-preview span').textContent = 'Encrypted before upload · expires within 24 hours'; $('#image-preview').hidden = false;
+  } catch(e) { if (version === imageRevision) error(e.message); }
+  finally { if (version === imageRevision) { imagePreparing = false; status(''); updateComposerState(); } }
+};
+function renderPrivateImage(message, content) {
+  const note = element('p', 'image-note'); content.append(note);
+  if (message.imageExpired || message.attachment.expiresAt <= Date.now()) { note.textContent = 'Image expired'; return; }
+  const img = element('img', 'private-image'); img.alt = 'Private image'; img.width = message.image.width; img.height = message.image.height;
+  content.append(img);
+  note.textContent = `Encrypted image · expires ${new Date(message.attachment.expiresAt).toLocaleString()}`;
+  if (imageURLs.has(message.id)) { img.src = imageURLs.get(message.id); return; }
+  const version = revision;
+  if (!imageLoads.has(message.id)) {
+    const controller = new AbortController();
+    const promise = (async () => {
+      const response = await fetch(`/api/attachments/${encodeURIComponent(message.image.id)}`, { signal: controller.signal, cache: 'no-store' });
+      if (!response.ok) throw new Error('Image expired or unavailable.');
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      const plain = HushCrypto.decryptImage(bytes, message.image);
+      // Only our raster format is rendered, never SVG/HTML or a server-provided MIME type.
+      if (String.fromCharCode(...plain.subarray(0, 4)) !== 'RIFF' || String.fromCharCode(...plain.subarray(8, 12)) !== 'WEBP') throw new Error('Invalid private image.');
+      if (version !== revision || controller.signal.aborted || !messages.some(m => m.id === message.id) || message.attachment.expiresAt <= Date.now()) throw new Error('Image no longer available.');
+      const url = URL.createObjectURL(new Blob([plain], { type: 'image/webp' })); imageURLs.set(message.id, url); return url;
+    })();
+    imageLoads.set(message.id, { promise, controller });
+  }
+  imageLoads.get(message.id).promise.then(url => { if (version === revision) img.src = url; }).catch(e => { img.hidden = true; note.textContent = e.message; });
+}
+$('#verify-identity').onclick = async () => {
+  if (!current?.peer || !encryptionClient) return;
+  try {
+    const person = await encryptionClient.peer(current.peer);
+    verificationTarget = person;
+    $('#verification-code').textContent = encryptionClient.code(person);
+    $('#verification-detail').textContent = person.verified ? 'You previously marked this identity as verified.' : 'Until you compare this code, this identity is trusted on first use.';
+    $('#verification-error').textContent = ''; $('#verify-dialog').showModal();
+  } catch(e) { error(e.message); }
+};
+$('#confirm-verification').onclick = async () => {
+  try {
+    const fresh = await encryptionClient.peer(verificationTarget.id);
+    if (fresh.publicKey !== verificationTarget.publicKey) throw new Error('Encryption identity changed.');
+    const verified = await encryptionClient.verify(fresh);
+    if (current?.peer === verified.id) { peerIdentity = verified; updateComposerState(); }
+    $('#verify-dialog').close();
+  } catch(e) { $('#verification-error').textContent = e.message; }
+};
 function setReply(message) {
   replying = message; $('#reply-preview').hidden = !message;
   $('#reply-preview span').textContent = message ? `Replying to ${message.alias}: ${message.text.slice(0, 120)}` : '';
@@ -144,15 +269,39 @@ async function runCommand(text, reply) {
 }
 $('#composer').onsubmit = async event => {
   event.preventDefault(); if (!current || sending) return;
-  const draft = $('#message').value, text = draft.trim(); if (!text) return;
-  const target = { ...current }, version = revision, reply = replying; sending = true; $('.send-button').disabled = true; error(); status('');
+  const draft = $('#message').value, text = draft.trim(); if ((!text && !pendingImage) || imagePreparing) return;
+  const target = { ...current }, version = revision, reply = replying, image = pendingImage; sending = true; $('.send-button').disabled = true; error(); status('');
   closeSuggestions(); toggleEmoji(false);
+  let uploadId;
   try {
+    if (image && text.startsWith('/') && !text.startsWith('//')) throw new Error('Send the image separately from a command.');
     if (text.startsWith('/') && !text.startsWith('//')) await runCommand(text, reply);
-    else receive(await api('message', { ...target, text: text.startsWith('//') ? text.slice(1) : text, replyTo: reply?.id }));
+    else if (target.peer) {
+      if (!encryptionClient) throw new Error(encryptionError || 'Private encryption is unavailable.');
+      const person = await encryptionClient.peer(target.peer);
+      let attachment = null;
+      if (image) {
+        status('Encrypting image…');
+        const encrypted = HushCrypto.encryptImage(new Uint8Array(await image.blob.arrayBuffer()));
+        status('Uploading encrypted image…');
+        const response = await fetch(`/api/attachments?peer=${encodeURIComponent(target.peer)}`, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: encrypted.bytes });
+        const result = await response.json(); if (!response.ok) throw new Error(result.error || 'Could not upload image.');
+        uploadId = result.id;
+        attachment = { id: uploadId, key: encrypted.key, nonce: encrypted.nonce, type: image.type, width: image.width, height: image.height, size: image.size };
+      }
+      const id = crypto.randomUUID();
+      const encrypted = encryptionClient.encrypt({ id, sender: me.id, recipient: target.peer, text: text.startsWith('//') ? text.slice(1) : text, replyTo: reply?.id || null, image: attachment }, person);
+      await receive(await api('message', { peer: target.peer, id, encrypted, replyTo: reply?.id, attachmentId: uploadId }));
+      uploadId = null; status('');
+      if (pendingImage === image) clearPendingImage();
+    } else {
+      if (image) throw new Error('Images can only be sent in private chats.');
+      await receive(await api('message', { ...target, text: text.startsWith('//') ? text.slice(1) : text, replyTo: reply?.id }));
+    }
+    if (drafts.get(conversationKey(target)) === draft) drafts.delete(conversationKey(target));
     if (version === revision && $('#message').value === draft) { $('#message').value = ''; $('#message').style.height = ''; if (replying === reply) setReply(null); }
-  } catch(e) { error(e.message); }
-  finally { sending = false; $('.send-button').disabled = !current; $('#message').focus(); }
+  } catch(e) { error(e.message); status(''); if (uploadId) fetch(`/api/attachments/${encodeURIComponent(uploadId)}`, { method: 'DELETE' }).catch(() => {}); }
+  finally { sending = false; updateComposerState(); $('#message').focus(); }
 };
 function closeSuggestions() { suggestions = []; $('#suggestions').hidden = true; $('#message').removeAttribute('aria-activedescendant'); }
 function renderSuggestions() {
@@ -267,6 +416,7 @@ $('#confirm-ban').onclick = async () => { $('#confirm-ban').disabled = true; try
 async function start() {
   try {
     const data = await api('session'); me = data.me; rooms = data.rooms; people = data.people;
+    try { encryptionClient = await HushCrypto.createClient(me.id, api); } catch(e) { encryptionError = e.message; }
     for (const person of data.conversations || []) conversations.set(person.id, person.alias);
     $('#my-alias').textContent = me.alias; $('.me-avatar').textContent = me.alias.split(' ').slice(0,2).map(x => x[0]).join(''); setAdmin(me.admin); renderPeople(); renderAdminPeople();
     if (me.admin) await refreshAdminState();
@@ -274,11 +424,19 @@ async function start() {
     stream = new EventSource('/api/events');
     stream.onopen = () => { $('#connection').textContent = 'Connected'; $('#connection').classList.add('live'); if (current) select(current); };
     stream.onerror = () => { $('#connection').textContent = 'Reconnecting…'; $('#connection').classList.remove('live'); };
+    stream.addEventListener('identity-ready', event => { const { id } = JSON.parse(event.data); if (current?.peer === id && !peerIdentity) select(current); });
     stream.addEventListener('people', event => { people = JSON.parse(event.data); renderPeople(); renderAdminPeople(); });
     stream.addEventListener('rooms', event => { rooms = JSON.parse(event.data); if (current?.room && !rooms.some(r => r.id === current.room)) { select(rooms[0] ? { room: rooms[0].id } : null); error('That room was removed by the host.'); } else if (!current && rooms[0]) select({ room: rooms[0].id }); else { renderRooms(); updateHeading(); } });
     stream.addEventListener('message', event => receive(JSON.parse(event.data)));
-    stream.addEventListener('message-removed', event => { const { id } = JSON.parse(event.data); messages = messages.filter(message => message.id !== id); for (const message of messages) if (message.reply?.id === id) message.reply = { id, removed: true }; if (replying?.id === id) setReply(null); renderMessages(); });
+    stream.addEventListener('message-removed', event => { const { id } = JSON.parse(event.data); revokeImage(id); messages = messages.filter(message => message.id !== id); for (const message of messages) if (message.reply?.id === id) message.reply = { id, removed: true }; if (replying?.id === id) setReply(null); renderMessages(); });
     stream.addEventListener('moderation', () => { if (me.admin) refreshAdminState(); });
+    setInterval(() => {
+      let changed = false;
+      for (const message of messages) if (message.image && message.attachment?.expiresAt <= Date.now() && !message.imageExpired) {
+        message.imageExpired = true; revokeImage(message.id); changed = true;
+      }
+      if (changed) renderMessages();
+    }, 10000);
   } catch(e) { error(e.message); $('#connection').textContent = 'Could not connect'; }
 }
 start();

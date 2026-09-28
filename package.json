@@ -3,6 +3,18 @@
   "version": "1.0.0",
   "private": true,
   "description": "Anonymous rooms and private conversations",
-  "scripts": { "start": "node --env-file-if-exists=.env server.mjs", "test": "node --test" },
-  "engines": { "node": ">=22" }
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server.mjs",
+    "test": "node --test",
+    "test:browser": "node scripts/browser-check.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "tweetnacl": "1.0.3"
+  },
+  "devDependencies": {
+    "playwright": "1.63.0"
+  }
 }

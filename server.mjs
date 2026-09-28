@@ -3,6 +3,8 @@ import { randomBytes, randomUUID, timingSafeEqual, createHash } from 'node:crypt
 import { readFile, mkdir, writeFile, rename } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import nacl from 'tweetnacl';
+import { Attachments } from './lib/attachments.mjs';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const dataDir = process.env.DATA_DIR || path.join(root, 'data');
@@ -17,6 +19,9 @@ catch (e) { if (e.code !== 'ENOENT') throw e; rooms = [
 let bans;
 try { bans = new Map(JSON.parse(await readFile(path.join(dataDir, 'bans.json'), 'utf8')).map(ban => [ban.key, ban])); }
 catch (e) { if (e.code !== 'ENOENT') throw e; bans = new Map(); }
+const attachmentTTL = Number(process.env.ATTACHMENT_TTL_SECONDS || 86400) * 1000;
+if (!Number.isFinite(attachmentTTL) || attachmentTTL < 1000 || attachmentTTL > 86400000) throw new Error('ATTACHMENT_TTL_SECONDS must be between 1 and 86400.');
+const attachments = new Attachments({ ttl: attachmentTTL });
 const sessions = new Map(), histories = new Map(), attempts = new Map();
 const password = process.env.ADMIN_PASSWORD || randomBytes(18).toString('base64url');
 const hash = value => createHash('sha256').update(value).digest();
@@ -54,23 +59,29 @@ function saveRooms(transform) {
   return job;
 }
 function fail(status, message) { throw Object.assign(new Error(message), { status }); }
+function base64Bytes(value, length, maximum = length) {
+  if (typeof value !== 'string' || value.length > 24000) return null;
+  const bytes = Buffer.from(value, 'base64');
+  if (bytes.toString('base64') !== value || (length !== null ? bytes.length !== length : bytes.length < 17 || bytes.length > maximum)) return null;
+  return bytes;
+}
 async function body(req) {
   let text = '';
-  for await (const chunk of req) { text += chunk; if (Buffer.byteLength(text) > 8192) fail(413, 'That request is too large.'); }
-  try { return JSON.parse(text); } catch { fail(400, 'Invalid request.'); }
+  for await (const chunk of req) { text += chunk; if (Buffer.byteLength(text) > 32768) fail(413, 'That request is too large.'); }
+  try { const parsed = JSON.parse(text); if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) fail(400, 'Invalid request.'); return parsed; } catch { fail(400, 'Invalid request.'); }
 }
 const server = http.createServer(async (req, res) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'no-referrer');
-  res.setHeader('Content-Security-Policy', "default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+  res.setHeader('Content-Security-Policy', "default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' blob:; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
   const json = (data, status = 200) => { res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(data)); };
   try {
     const url = new URL(req.url, 'http://localhost');
     if (!url.pathname.startsWith('/api/')) {
-      const files = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/theme.js': ['theme.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'], '/favicon.svg': ['favicon.svg', 'image/svg+xml'] };
+      const files = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/crypto.js': ['crypto.js', 'text/javascript'], '/private.js': ['private.js', 'text/javascript'], '/vendor/nacl.js': ['../node_modules/tweetnacl/nacl-fast.min.js', 'text/javascript'], '/theme.js': ['theme.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'], '/favicon.svg': ['favicon.svg', 'image/svg+xml'] };
       if (req.method !== 'GET' || !files[url.pathname]) fail(404, 'Not found.');
       const [file, type] = files[url.pathname];
-      res.writeHead(200, { 'Content-Type': type }); res.end(await readFile(path.join(root, 'public', file))); return;
+      res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'no-cache' }); res.end(await readFile(path.join(root, 'public', file))); return;
     }
     const origin = process.env.ORIGIN || `http://${req.headers.host}`;
     if (req.headers.origin && req.headers.origin !== origin) fail(403, 'Request origin is not allowed.');
@@ -92,6 +103,29 @@ const server = http.createServer(async (req, res) => {
     }
     if (!session) fail(401, 'Your anonymous session expired. Refresh to rejoin.');
     session.seen = Date.now();
+    if (url.pathname === '/api/identity' && req.method === 'GET') {
+      const peer = [...sessions.values()].find(s => s.id === url.searchParams.get('peer'));
+      if (!peer?.publicKey) fail(409, 'This person has not enabled private encryption yet. They need to open or refresh Hushroom.');
+      json({ id: peer.id, publicKey: peer.publicKey }); return;
+    }
+    if (url.pathname === '/api/attachments' && req.method === 'POST') {
+      const peer = [...sessions.values()].find(s => s.id === url.searchParams.get('peer'));
+      if (!peer || peer.id === session.id) fail(404, 'That person is no longer available.');
+      if (!session.publicKey || !peer.publicKey) fail(409, 'Both people need encryption identities before uploading.');
+      if (req.headers['content-type'] !== 'application/octet-stream') fail(415, 'Upload encrypted image bytes only.');
+      const uploaded = await attachments.upload(req, session.id, peer.id);
+      // A ban or session expiry may have happened while reading the upload.
+      if (sessions.get(token) !== session || ![...sessions.values()].includes(peer)) { attachments.remove(uploaded.id); fail(403, 'This private session is no longer available.'); }
+      json(uploaded); return;
+    }
+    if (url.pathname.startsWith('/api/attachments/')) {
+      const id = url.pathname.slice('/api/attachments/'.length), item = attachments.get(id, session.id);
+      if (req.method === 'GET') {
+        res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': item.bytes.length, 'Cache-Control': 'no-store', 'Content-Disposition': 'attachment' }); res.end(item.bytes); return;
+      }
+      if (req.method === 'DELETE' && item.owner === session.id && !item.message) { attachments.remove(id); json({ ok: true }); return; }
+      fail(403, 'That image cannot be removed here.');
+    }
     if (url.pathname === '/api/events' && req.method === 'GET') {
       if (session.streams.size >= 6) fail(429, 'Too many open tabs.');
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
@@ -110,6 +144,14 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method !== 'POST') fail(404, 'Not found.');
     const input = await body(req);
+    if (url.pathname === '/api/identity') {
+      const bytes = base64Bytes(input.publicKey, 32);
+      if (!bytes || nacl.scalarMult(new Uint8Array(32).fill(42), bytes).every(x => x === 0)) fail(400, 'Invalid public encryption key.');
+      if (session.publicKey && session.publicKey !== input.publicKey) fail(409, 'Your local encryption key does not match this session. Start a new browser session to chat privately.');
+      const first = !session.publicKey; session.publicKey = input.publicKey;
+      if (first) broadcast('identity-ready', { id: session.id });
+      json({ ok: true }); return;
+    }
     if (url.pathname === '/api/join') {
       if (!rooms.some(r => r.id === input.room)) fail(404, 'Room no longer exists.');
       session.room = input.room; publishRooms(); json({ ok: true }); return;
@@ -117,6 +159,32 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/message') {
       session.sent = session.sent.filter(t => Date.now() - t < 10000);
       if (session.sent.length >= 8) fail(429, 'Take a breath. Try again in a few seconds.');
+      if (input.peer) {
+        const peer = [...sessions.values()].find(s => s.id === input.peer);
+        if (!peer || peer.id === session.id) fail(404, 'That person is no longer available.');
+        if (!session.publicKey || !peer.publicKey) fail(409, 'Private encryption is not ready.');
+        if (Object.keys(input).some(key => !['peer', 'id', 'encrypted', 'replyTo', 'attachmentId'].includes(key))) fail(400, 'Private messages must contain ciphertext only.');
+        const box = input.encrypted;
+        if (!box || box.v !== 1 || Object.keys(box).some(k => !['v', 'nonce', 'ciphertext'].includes(k)) ||
+            !base64Bytes(box.nonce, 24) || !base64Bytes(box.ciphertext, null, 18000) ||
+            !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(input.id || '')) fail(400, 'Invalid encrypted private message.');
+        const key = keyFor(session, null, peer.id), history = histories.get(key) || [];
+        const duplicate = history.find(m => m.id === input.id);
+        if (duplicate) {
+          if (duplicate.sender !== session.id || JSON.stringify(duplicate.encrypted) !== JSON.stringify(box) || (duplicate.reply?.id || null) !== (input.replyTo || null) || (duplicate.attachment?.id || null) !== (input.attachmentId || null)) fail(409, 'Message ID already used.');
+          json(duplicate); return;
+        }
+        const original = input.replyTo == null ? null : history.find(m => m.id === input.replyTo);
+        if (input.replyTo != null && !original) fail(400, 'That reply is no longer available in this conversation.');
+        const attachment = input.attachmentId == null ? null : attachments.claim(input.attachmentId, session.id, peer.id, input.id);
+        const message = { id: input.id, sender: session.id, alias: session.alias, recipient: peer.id, room: null,
+          time: new Date().toISOString(), encrypted: box, reply: original ? { id: original.id } : null, attachment };
+        session.sent.push(Date.now());
+        if (history.length >= 100) attachments.remove(history[0].attachment?.id);
+        histories.set(key, [...history, message].slice(-100));
+        emit(session, 'message', message); emit(peer, 'message', message); json(message); return;
+      }
+      if (input.encrypted || input.attachmentId) fail(400, 'Encrypted attachments belong in private conversations.');
       const text = typeof input.text === 'string' ? input.text.trim() : '';
       if (!text || text.length > 2000) fail(400, 'Use between 1 and 2,000 characters.');
       const peer = input.peer && [...sessions.values()].find(s => s.id === input.peer);
@@ -184,7 +252,7 @@ const server = http.createServer(async (req, res) => {
       bans.set(key, { key, id: person.id, alias: person.alias, bannedAt: new Date().toISOString() });
       try { await saveBans(); } catch (error) { bans.delete(key); throw error; }
       for (const stream of person.streams) stream.end();
-      sessions.delete(targetToken); presence(); publishRooms(); broadcast('moderation', {});
+      sessions.delete(targetToken); attachments.removeUser(person.id); presence(); publishRooms(); broadcast('moderation', {});
       json({ ok: true }); return;
     }
     if (url.pathname === '/api/admin/unban') {
@@ -196,16 +264,18 @@ const server = http.createServer(async (req, res) => {
       json({ ok: true }); return;
     }
     if (url.pathname === '/api/admin/remove-message') {
-      let found = false;
+      let found;
       for (const [key, history] of histories) {
         if (history.some(message => message.id === input.id)) {
+          found = history.find(message => message.id === input.id);
+          attachments.remove(found.attachment?.id);
           histories.set(key, history.filter(message => message.id !== input.id));
-          found = true;
         }
         for (const message of histories.get(key)) if (message.reply?.id === input.id) message.reply = { id: input.id, removed: true };
       }
       if (!found) fail(404, 'That message is no longer available.');
-      broadcast('message-removed', { id: input.id });
+      if (found.room) broadcast('message-removed', { id: input.id });
+      else for (const s of sessions.values()) if (s.id === found.sender || s.id === found.recipient) emit(s, 'message-removed', { id: input.id });
       json({ ok: true }); return;
     }
     fail(404, 'Not found.');
@@ -213,8 +283,9 @@ const server = http.createServer(async (req, res) => {
 });
 setInterval(() => {
   for (const [token, s] of sessions) if (!online(s) && Date.now() - s.seen > 86400000) {
-    sessions.delete(token); for (const key of histories.keys()) if (key.startsWith('dm:') && key.includes(s.id)) histories.delete(key);
+    sessions.delete(token); attachments.removeUser(s.id); for (const key of histories.keys()) if (key.startsWith('dm:') && key.includes(s.id)) histories.delete(key);
   }
+  attachments.sweep();
   for (const [ip, a] of attempts) if (Date.now() > a.reset) attempts.delete(ip);
 }, 60000).unref();
 server.listen(Number(process.env.PORT || 3000), process.env.HOST || '127.0.0.1', () => {

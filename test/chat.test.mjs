@@ -6,6 +6,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import net from 'node:net';
 import { once } from 'node:events';
+import { randomUUID } from 'node:crypto';
+import nacl from 'tweetnacl';
+import encryption from '../public/crypto.js';
 
 test('anonymous public chat, private isolation, admin control and persistence', async () => {
   const data = await mkdtemp(path.join(tmpdir(), 'hushroom-test-'));
@@ -17,7 +20,18 @@ test('anonymous public chat, private isolation, admin control and persistence', 
     await new Promise((resolve, reject) => { const timer = setTimeout(() => reject(new Error('Server startup timed out')), 10000); child.stdout.once('data', () => { clearTimeout(timer); resolve(); }); child.once('error', reject); child.once('exit', code => { clearTimeout(timer); reject(new Error(`Server exited: ${code}`)); }); });
   }
   async function stop() { if (child && child.exitCode === null) { const exit = once(child, 'exit'); child.kill(); await exit; } }
-  async function visitor() { const res = await fetch(`${origin}/api/session`); return { cookie: res.headers.get('set-cookie').split(';')[0], ...(await res.json()) }; }
+  async function visitor() {
+    const res = await fetch(`${origin}/api/session`);
+    const user = { cookie: res.headers.get('set-cookie').split(';')[0], ...(await res.json()), identity: nacl.box.keyPair() };
+    assert.equal((await request(user, 'identity', { publicKey: encryption.base64(user.identity.publicKey) })).status, 200);
+    return user;
+  }
+  function privatePayload(user, peer, text, extra = {}) {
+    const id = randomUUID();
+    const encrypted = encryption.encryptMessage({ id, sender: user.me.id, recipient: peer.me.id, text, ...extra }, user.identity, encryption.base64(peer.identity.publicKey));
+    return { id, peer: peer.me.id, encrypted, replyTo: extra.replyTo, attachmentId: extra.image?.id };
+  }
+  const decrypt = (message, user, peer) => encryption.decryptMessage(message, user.me.id, user.identity, encryption.base64(peer.identity.publicKey));
   async function request(user, route, body, source = origin) {
     const res = await fetch(`${origin}/api/${route}`, { method: body === undefined ? 'GET' : 'POST', headers: { cookie: user.cookie, Origin: source, 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     return { status: res.status, data: await res.json() };
@@ -36,10 +50,17 @@ test('anonymous public chat, private isolation, admin control and persistence', 
     const [ae,be,ce] = await Promise.all([events(a),events(b),events(c)]);
     const room = a.rooms[0].id;
     const pub = await request(a, 'message', { room, text: 'Hello, everyone!' }); assert.equal(pub.status, 200);
-    const dm = await request(a, 'message', { peer: b.me.id, text: '<script>private</script>' }); assert.equal(dm.status, 200);
+    const dm = await request(a, 'message', privatePayload(a, b, '<script>private</script>')); assert.equal(dm.status, 200);
     await new Promise(resolve => setTimeout(resolve, 100));
     assert.ok(ae.some(m => m.id === dm.data.id)); assert.ok(be.some(m => m.id === dm.data.id)); assert.ok(ce.some(m => m.id === pub.data.id)); assert.ok(!ce.some(m => m.id === dm.data.id));
-    assert.equal((await request(b, `history?peer=${a.me.id}`)).data[0].text, '<script>private</script>');
+    const privateHistory = (await request(b, `history?peer=${a.me.id}`)).data;
+    assert.equal(decrypt(privateHistory[0], b, a).text, '<script>private</script>');
+    assert.equal(privateHistory[0].text, undefined);
+    assert.ok(!JSON.stringify(privateHistory).includes('<script>private</script>'));
+    assert.equal((await request(a, 'message', { peer: b.me.id, text: 'plaintext forbidden' })).status, 400);
+    assert.equal((await request(a, 'identity', { publicKey: encryption.base64(nacl.box.keyPair().publicKey) })).status, 409);
+    assert.equal((await request(a, 'identity', { publicKey: encryption.base64(new Uint8Array(32)) })).status, 400);
+    assert.equal((await request(a, 'message', { ...privatePayload(a, b, 'secret'), text: 'leaked caption' })).status, 400);
     assert.deepEqual((await request(c, `history?peer=${a.me.id}`)).data, []);
     const reply = await request(b, 'message', { room, text: `Hi @${a.me.alias}! 👋`, replyTo: pub.data.id });
     assert.equal(reply.status, 200);
@@ -47,12 +68,13 @@ test('anonymous public chat, private isolation, admin control and persistence', 
     assert.deepEqual(reply.data.mentions, [{ id: a.me.id, alias: a.me.alias, start: 3, end: 4 + a.me.alias.length }]);
     assert.equal((await request(c, 'message', { room, text: 'Expose private quote', replyTo: dm.data.id })).status, 400);
     assert.equal((await request(b, 'message', { room: a.rooms[1].id, text: 'Wrong room', replyTo: pub.data.id })).status, 400);
-    assert.equal((await request(b, 'message', { peer: c.me.id, text: 'Wrong participants', replyTo: dm.data.id })).status, 400);
-    const privateReply = await request(b, 'message', { peer: a.me.id, text: `Thanks @${a.me.alias}, @${c.me.alias}`, replyTo: dm.data.id });
+    assert.equal((await request(b, 'message', privatePayload(b, c, 'Wrong participants', { replyTo: dm.data.id }))).status, 400);
+    const privateReply = await request(b, 'message', privatePayload(b, a, `Thanks @${a.me.alias}, @${c.me.alias}`, { replyTo: dm.data.id }));
     assert.equal(privateReply.status, 200);
-    assert.deepEqual(privateReply.data.mentions.map(p => p.id), [a.me.id]);
-    const literal = await request(b, 'message', { peer: a.me.id, text: `email@${a.me.alias} @${a.me.alias}extra`, mentions: [{ id: c.me.id }] });
-    assert.deepEqual(literal.data.mentions, []);
+    assert.equal(privateReply.data.mentions, undefined);
+    assert.equal(decrypt(privateReply.data, a, b).text, `Thanks @${a.me.alias}, @${c.me.alias}`);
+    const literal = await request(b, 'message', privatePayload(b, a, `email@${a.me.alias} @${a.me.alias}extra`));
+    assert.equal(literal.data.mentions, undefined);
     await new Promise(resolve => setTimeout(resolve, 100));
     assert.ok(be.some(m => m.id === reply.data.id && m.reply.id === pub.data.id));
     assert.ok(!ce.some(m => m.id === privateReply.data.id));
@@ -70,6 +92,27 @@ test('anonymous public chat, private isolation, admin control and persistence', 
     assert.equal(remaining.length, 1);
     assert.deepEqual(remaining[0].reply, { id: pub.data.id, removed: true });
     assert.equal((await request(b, 'message', { room, text: 'Reply after removal', replyTo: pub.data.id })).status, 400);
+    const plaintext = new TextEncoder().encode('private image bytes only visible in browsers');
+    const encryptedImage = encryption.encryptImage(plaintext);
+    const uploadedResponse = await fetch(`${origin}/api/attachments?peer=${b.me.id}`, { method: 'POST', headers: { Cookie: a.cookie, Origin: origin, 'Content-Type': 'application/octet-stream' }, body: encryptedImage.bytes });
+    assert.equal(uploadedResponse.status, 200); const uploaded = await uploadedResponse.json();
+    const imageURL = `${origin}/api/attachments/${uploaded.id}`;
+    assert.equal((await fetch(imageURL, { headers: { Cookie: b.cookie } })).status, 404); // Not published yet.
+    const image = { id: uploaded.id, key: encryptedImage.key, nonce: encryptedImage.nonce, type: 'image/webp', width: 1, height: 1, size: plaintext.length };
+    assert.equal((await request(b, 'message', privatePayload(b, a, 'stolen upload', { image }))).status, 404);
+    const payload = privatePayload(a, b, 'encrypted caption', { image });
+    const sentImage = await request(a, 'message', payload); assert.equal(sentImage.status, 200);
+    assert.equal((await request(a, 'message', payload)).data.id, payload.id); // Safe network retry.
+    assert.equal((await fetch(imageURL, { headers: { Cookie: c.cookie } })).status, 404);
+    assert.equal((await fetch(imageURL)).status, 401);
+    const downloaded = await fetch(imageURL, { headers: { Cookie: b.cookie } });
+    assert.equal(downloaded.headers.get('cache-control'), 'no-store');
+    const ciphertext = new Uint8Array(await downloaded.arrayBuffer());
+    assert.deepEqual(ciphertext, encryptedImage.bytes); assert.notDeepEqual(ciphertext, plaintext);
+    assert.deepEqual(encryption.decryptImage(ciphertext, decrypt(sentImage.data, b, a).image), plaintext);
+    assert.equal((await request(a, 'admin/remove-message', { id: sentImage.data.id })).status, 200);
+    assert.equal((await fetch(imageURL, { headers: { Cookie: b.cookie } })).status, 404);
+    await new Promise(resolve => setTimeout(resolve, 50)); assert.ok(!ce.removals.includes(sentImage.data.id));
     assert.equal((await request(a, 'admin/ban', { id: c.me.id })).status, 200);
     assert.equal((await request(c, `history?room=${room}`)).status, 403);
     assert.equal((await request(c, 'session')).status, 403);
