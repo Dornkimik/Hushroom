@@ -15,6 +15,8 @@
     <Content Include="public\app.js"/><Content Include="public\crypto.js"/><Content Include="public\private.js"/><Content Include="public\favicon.svg"/>
     <Content Include="README.md"/><Content Include=".env.example"/>
     <Content Include="test\chat.test.mjs"/>
+    <Content Include="lib\groups.mjs"/><Content Include="public\groups.js"/>
+    <Content Include="test\groups.test.mjs"/><Content Include="scripts\group-browser-check.mjs"/>
   </ItemGroup>
   <Import Project="$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)\Node.js Tools\Microsoft.NodejsTools.targets" />
 </Project>

@@ -20,6 +20,7 @@ async function composer() {
     document: { querySelector: node, querySelectorAll: () => [], createElement: () => new Node(), createTextNode: text => ({ textContent: text }), addEventListener() {} },
     fetch: (url, options) => { calls.push({ url, options }); return new Promise(() => {}); }, URLSearchParams
   });
+  vm.runInContext(await readFile(new URL('../public/groups.js', import.meta.url), 'utf8'), context);
   vm.runInContext(await readFile(new URL('../public/app.js', import.meta.url), 'utf8'), context);
   const run = code => vm.runInContext(code, context);
   run("me = { id: 'me', alias: 'Quiet Fox abcd', admin: false }; people = [me, { id: 'other', alias: 'Amber Owl 1234' }]; current = { room: 'living' };");

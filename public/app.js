@@ -4,7 +4,7 @@ let replying, sending = false, suggestions = [], suggestionIndex = 0, completion
 let encryptionClient, encryptionError = '', peerIdentity, pendingImage, imagePreparing = false, imageRevision = 0, verificationTarget;
 const imageURLs = new Map(), imageLoads = new Map();
 const conversations = new Map(), unread = new Map(), drafts = new Map();
-const conversationKey = target => target ? `${target.peer ? 'peer' : 'room'}:${target.peer || target.room}` : '';
+const conversationKey = target => target ? `${target.group ? 'group' : target.peer ? 'peer' : 'room'}:${target.group || target.peer || target.room}` : '';
 async function api(url, data) {
   const response = await fetch(`/api/${url}`, data === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
   const result = await response.json();
@@ -29,6 +29,7 @@ function renderRooms() {
   }));
   if (!rooms.length) $('#rooms').append(element('p', 'aside-hint', 'No rooms yet. The host can create one.'));
   renderAdminRooms();
+  renderGroups();
 }
 function renderPeople() {
   $('#online-count').textContent = people.length;
@@ -50,19 +51,23 @@ function renderDMs() {
   }));
 }
 function updateHeading() {
-  const privateChat = Boolean(current?.peer), room = rooms.find(r => r.id === current?.room);
+  const privateChat = Boolean(current?.peer), groupChat = Boolean(current?.group), room = groupChat ? groupState || groupRooms.find(g => g.id === current.group) : rooms.find(r => r.id === current?.room);
   $('#room-title').textContent = privateChat ? conversations.get(current.peer) || 'Private conversation' : room?.name || 'A little quiet for now';
   $('#room-description').textContent = privateChat ? 'A conversation just between the two of you.' : room?.description || 'Choose a room or someone to talk to.';
   $('#room-symbol').textContent = privateChat ? '↗' : '#';
   $('#conversation-type').textContent = privateChat ? 'JUST BETWEEN YOU TWO' : 'COME AS YOU ARE';
-  $('#room-badge').textContent = privateChat ? 'PRIVATE CHAT' : 'OPEN ROOM';
-  $('#private-note').hidden = !privateChat;
+  $('#room-badge').textContent = groupChat ? 'ENCRYPTED ROOM' : privateChat ? 'PRIVATE CHAT' : 'OPEN ROOM';
+  $('#private-note').hidden = !privateChat && !groupChat;
+  $('#group-details').hidden = !groupChat;
+  $('#group-details').disabled = !groupState;
+  $('#room-rules').hidden = !groupChat || !room?.rules;
+  $('#room-rules').textContent = groupChat && room?.rules ? `Rules: ${room.rules}` : '';
   $('#message').placeholder = privateChat ? 'Say something, just to them…' : 'Leave a little thought…';
   updateComposerState();
   $('#welcome h2').textContent = privateChat ? 'A little more personal.' : 'Make yourself at home.';
   $('#welcome p').textContent = privateChat ? 'One conversation. Just the two of you.\nA simple hello is a good place to start.' : 'No introductions needed. A simple hello is a good place to start.';
 }
-function matches(message, target = current) { return target && (target.peer ? !message.room && ((message.sender === me.id && message.recipient === target.peer) || (message.sender === target.peer && message.recipient === me.id)) : message.room === target.room); }
+function matches(message, target = current) { return target && (target.group ? message.group === target.group : message.group ? false : target.peer ? !message.room && ((message.sender === me.id && message.recipient === target.peer) || (message.sender === target.peer && message.recipient === me.id)) : message.room === target.room); }
 async function select(target) {
   setReply(null); closeSuggestions(); toggleEmoji(false);
   if (conversationKey(target) !== conversationKey(current)) {
@@ -70,12 +75,18 @@ async function select(target) {
     $('#message').value = drafts.get(conversationKey(target)) || ''; resizeComposer();
     clearPendingImage(); status('');
   }
-  clearImageURLs(); peerIdentity = null;
+  clearImageURLs(); peerIdentity = null; groupState = null;
   current = target; const version = ++revision; messages = []; error();
   if (target?.peer) unread.delete(target.peer);
   renderRooms(); renderDMs(); updateHeading(); renderMessages();
   if (!target) return;
   try {
+    if (target.group) {
+      if (!encryptionClient) throw new Error(encryptionError || 'Room encryption is unavailable.');
+      const state = await api(`groups/state?group=${encodeURIComponent(target.group)}`);
+      if (version !== revision) return;
+      groupState = state; updateHeading();
+    }
     if (target.peer) {
       if (!encryptionClient) throw new Error(encryptionError || 'Private encryption is unavailable.');
       const person = await encryptionClient.peer(target.peer);
@@ -83,11 +94,11 @@ async function select(target) {
       peerIdentity = person; updateComposerState();
     }
     if (target.room) await api('join', target);
-    const history = await Promise.all((await api(`history?${new URLSearchParams(target)}`)).map(decodePrivate));
+    const history = await Promise.all((await api(`${target.group ? 'groups/history' : 'history'}?${new URLSearchParams(target)}`)).map(decodePrivate));
     if (version !== revision) return;
     messages = [...new Map([...history, ...messages].map(m => [m.id, m])).values()].sort((a,b) => a.time.localeCompare(b.time)).slice(-100);
     renderMessages();
-  } catch (e) { if (version === revision) { error(e.message); if (target.peer) { peerIdentity = null; updateComposerState(e.message); } } }
+  } catch (e) { if (version === revision) { error(e.message); if (target.peer || target.group) { peerIdentity = null; groupState = null; updateComposerState(e.message); } } }
 }
 function renderMessages() {
   $('#messages').replaceChildren(...messages.map(message => {
@@ -102,10 +113,10 @@ function renderMessages() {
     const replyButton = element('button', 'message-reply', 'Reply');
     replyButton.type = 'button'; replyButton.disabled = Boolean(message.locked); replyButton.onclick = () => { setReply(message); $('#message').focus(); };
     meta.append(replyButton);
-    if (own || me?.admin) {
+    if (own || (message.group ? groupState?.owner === me.id : me?.admin)) {
       const remove = element('button', 'message-remove', own ? 'Delete' : 'Remove');
       remove.type = 'button'; remove.title = 'Remove this message for everyone';
-      remove.onclick = async () => { remove.disabled = true; try { applyRemoval(await api(own ? 'message/delete' : 'admin/remove-message', { id: message.id })); } catch(e) { error(e.message); remove.disabled = false; } };
+      remove.onclick = async () => { remove.disabled = true; try { applyRemoval(await api(message.group ? 'groups/message-delete' : own ? 'message/delete' : 'admin/remove-message', { id: message.id, ...(message.group ? { group: message.group } : {}) })); } catch(e) { error(e.message); remove.disabled = false; } };
       meta.append(remove);
     }
     content.append(meta);
@@ -138,7 +149,7 @@ function applyRemoval(removed) {
   renderMessages();
 }
 async function receive(message) {
-  if (!message.room) {
+  if (!message.room && !message.group) {
     const peer = message.sender === me.id ? message.recipient : message.sender;
     if (!conversations.has(peer)) conversations.set(peer, people.find(p => p.id === peer)?.alias || message.alias);
     if (current?.peer !== peer && message.sender !== me.id) unread.set(peer, (unread.get(peer) || 0) + 1);
@@ -157,15 +168,33 @@ async function receive(message) {
 }
 function updateComposerState(problem) {
   const privateChat = Boolean(current?.peer), ready = Boolean(encryptionClient && peerIdentity?.id === current?.peer);
-  $('#message').disabled = !current || (privateChat && !ready);
+  const groupChat = Boolean(current?.group), groupReady = Boolean(encryptionClient && groupState?.id === current?.group && groupState?.joined);
+  $('#message').disabled = !current || (privateChat && !ready) || (groupChat && !groupReady);
   $('#message').required = !pendingImage;
-  $('.send-button').disabled = !current || sending || imagePreparing || (privateChat && !ready);
+  $('.send-button').disabled = $('#message').disabled || sending || imagePreparing;
   $('#emoji-toggle').disabled = $('#message').disabled;
   $('#attach-image').hidden = !privateChat; $('#attach-image').disabled = !ready || sending || imagePreparing;
   $('#verify-identity').disabled = !ready;
+  $('#verify-identity').hidden = groupChat;
+  if (groupChat) $('#encryption-status').textContent = problem || (groupReady ? 'End-to-end encrypted · Verify members in Room details · Text only' : encryptionError || 'Preparing room encryption…');
   if (privateChat) $('#encryption-status').textContent = problem || (ready ? `End-to-end encrypted · ${peerIdentity.verified ? 'Identity verified' : 'Identity not verified'}` : encryptionError || 'Waiting for private encryption…');
 }
 async function decodePrivate(message) {
+  if (message.group) {
+    try {
+      if (!encryptionClient) throw new Error(encryptionError || 'Room encryption is unavailable.');
+      const plain = await encryptionClient.decryptGroup(message), mentions = [];
+      for (const user of groupState?.members || []) {
+        const tag = `@${user.alias}`; let start = plain.text.indexOf(tag);
+        while (start !== -1) {
+          const end = start + tag.length;
+          if ((!start || /\s/.test(plain.text[start - 1])) && (end === plain.text.length || /[\s.,!?;:()]/.test(plain.text[end]))) mentions.push({ id: user.id, start, end });
+          start = plain.text.indexOf(tag, end);
+        }
+      }
+      return { ...message, ...plain, mentions: mentions.sort((a, b) => a.start - b.start) };
+    } catch(e) { return { ...message, text: e.message, locked: true }; }
+  }
   if (message.room) return message;
   try {
     if (!encryptionClient) throw new Error(encryptionError || 'Private encryption is unavailable.');
@@ -234,16 +263,17 @@ function renderPrivateImage(message, content) {
   }
   imageLoads.get(message.id).promise.then(url => { if (version === revision) img.src = url; }).catch(e => { img.hidden = true; note.textContent = e.message; });
 }
-$('#verify-identity').onclick = async () => {
-  if (!current?.peer || !encryptionClient) return;
+async function showVerification(id) {
+  if (!id || !encryptionClient) return;
   try {
-    const person = await encryptionClient.peer(current.peer);
+    const person = await encryptionClient.peer(id);
     verificationTarget = person;
     $('#verification-code').textContent = encryptionClient.code(person);
     $('#verification-detail').textContent = person.verified ? 'You previously marked this identity as verified.' : 'Until you compare this code, this identity is trusted on first use.';
     $('#verification-error').textContent = ''; $('#verify-dialog').showModal();
   } catch(e) { error(e.message); }
-};
+}
+$('#verify-identity').onclick = () => showVerification(current?.peer);
 $('#confirm-verification').onclick = async () => {
   try {
     const fresh = await encryptionClient.peer(verificationTarget.id);
@@ -290,7 +320,14 @@ $('#composer').onsubmit = async event => {
   try {
     if (image && text.startsWith('/') && !text.startsWith('//')) throw new Error('Send the image separately from a command.');
     if (text.startsWith('/') && !text.startsWith('//')) await runCommand(text, reply);
-    else if (target.peer) {
+    else if (target.group) {
+      if (!encryptionClient) throw new Error(encryptionError || 'Room encryption is unavailable.');
+      const state = await api(`groups/state?group=${encodeURIComponent(target.group)}`);
+      const id = crypto.randomUUID();
+      const envelopes = await encryptionClient.encryptGroup({ id, group: state.id, version: state.version, sender: me.id,
+        text: text.startsWith('//') ? text.slice(1) : text, replyTo: reply?.id || null }, state.members);
+      await receive(await api('groups/message', { group: state.id, version: state.version, id, envelopes, replyTo: reply?.id }));
+    } else if (target.peer) {
       if (!encryptionClient) throw new Error(encryptionError || 'Private encryption is unavailable.');
       const person = await encryptionClient.peer(target.peer);
       let attachment = null;
@@ -338,7 +375,7 @@ function updateSuggestions() {
     if (command || mention) {
       const query = (command ? command[3] : mention[1]).toLowerCase();
       completionStart = command ? before.indexOf(' ') + 1 : before.lastIndexOf('@');
-      const candidates = command?.[1] === 'unban' ? adminBans : [...new Map([...(me ? [me] : []), ...people, ...messages.map(m => ({ id: m.sender, alias: m.alias }))].map(p => [p.id, p])).values()];
+      const candidates = command?.[1] === 'unban' ? adminBans : current?.group && !command ? groupState?.members || [] : [...new Map([...(me ? [me] : []), ...people, ...messages.map(m => ({ id: m.sender, alias: m.alias }))].map(p => [p.id, p])).values()];
       suggestions = candidates.filter(p => (!current?.peer || command || p.id === me.id || p.id === current.peer) && p.alias.toLowerCase().includes(query) && (!command || p.id !== me.id)).slice(0, 8).map(p => ({ label: p.alias, value: `@${p.alias} ` }));
     }
   }
@@ -449,7 +486,7 @@ $('#cancel-ban').onclick = () => $('#ban-dialog').close();
 $('#confirm-ban').onclick = async () => { $('#confirm-ban').disabled = true; try { await api('admin/ban', { id: banning.id }); $('#ban-dialog').close(); await refreshAdminState(); } catch(e) { $('#ban-error').textContent = e.message; } finally { $('#confirm-ban').disabled = false; } };
 async function start() {
   try {
-    const data = await api('session'); me = data.me; rooms = data.rooms; people = data.people;
+    const data = await api('session'); me = data.me; rooms = data.rooms; people = data.people; groupRooms = data.groups || [];
     try { encryptionClient = await SilenzaCrypto.createClient(me.id, api); } catch(e) { encryptionError = e.message; }
     for (const person of data.conversations || []) conversations.set(person.id, person.alias);
     $('#my-alias').textContent = me.alias; $('.me-avatar').textContent = me.alias.split(' ').slice(0,2).map(x => x[0]).join(''); setAdmin(me.admin); renderPeople(); renderAdminPeople();
@@ -460,6 +497,14 @@ async function start() {
     stream.onerror = () => { $('#connection').textContent = 'Reconnecting…'; $('#connection').classList.remove('live'); };
     stream.addEventListener('identity-ready', event => { const { id } = JSON.parse(event.data); if (current?.peer === id && !peerIdentity) select(current); });
     stream.addEventListener('session', event => updateSession(JSON.parse(event.data)));
+    stream.addEventListener('groups-changed', refreshGroups);
+    stream.addEventListener('group-state', event => groupStateChanged(JSON.parse(event.data)));
+    stream.addEventListener('group-removed', event => {
+      const removed = JSON.parse(event.data); drafts.delete(`group:${removed.group}`);
+      if (current?.group === removed.group) closeCurrentGroup(removed.reason);
+      if (groupPanel?.id === removed.group) { $('#group-dialog').close(); groupPanel = null; }
+      refreshGroups();
+    });
     stream.addEventListener('appearance', event => updateAppearance(JSON.parse(event.data)));
     stream.addEventListener('people', event => { people = JSON.parse(event.data); for (const person of people) updateAppearance(person); renderPeople(); renderDMs(); renderAdminPeople(); });
     stream.addEventListener('rooms', event => { rooms = JSON.parse(event.data); if (current?.room && !rooms.some(r => r.id === current.room)) { select(rooms[0] ? { room: rooms[0].id } : null); error('That room was removed by the host.'); } else if (!current && rooms[0]) select({ room: rooms[0].id }); else { renderRooms(); updateHeading(); } });
@@ -475,4 +520,5 @@ async function start() {
     }, 10000);
   } catch(e) { error(e.message); $('#connection').textContent = 'Could not connect'; }
 }
+setupGroups();
 start();

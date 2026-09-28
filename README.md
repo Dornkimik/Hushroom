@@ -14,6 +14,16 @@ Public-room messages are visible to other visitors and are not end-to-end encryp
 
 This protection depends on trusting the website code delivered to your browser. Someone who controls the website could change that code to capture messages or keys. A compromised device or browser extension could expose them too.
 
+### Temporary rooms
+
+Choose **＋ Create** beside **Temporary rooms** to create a user-owned room. Give it a name, description, and rules, and choose **Open to everyone** or **Invite only**. Invite-only rooms appear only to their members and invited sessions; owners invite people from **Room details & members**. Owners can edit details and access, kick members, transfer ownership to another member, or delete the room. Members can leave; an owner with other members must transfer ownership or delete the room first.
+
+Room text, replies, and mentions are end-to-end encrypted using the same browser identities and authenticated encryption as private chats. Each message is encrypted separately for every current member, including its sender. Use **Verify identity** beside a member to compare identity codes through another trusted channel. Group rooms currently support text; image sharing remains available in one-to-one private chats. Names, descriptions, rules, membership, and message counts are metadata visible to the server. Open rooms can be joined by anyone, so use invite-only access for a restricted conversation.
+
+New members receive only future messages. Leaving and rejoining starts a new membership. Kicking a member blocks this session from rejoining and excludes it from subsequent message delivery and encryption; it cannot erase copies already received. A changed membership list requires the sender to encrypt again before sending. Room owners see each current member’s total accepted messages during that membership, including deleted messages. Other members do not receive these counters.
+
+Rooms support up to 20 members. Each visitor can own three rooms and join up to 20. They exist only in server memory and disappear on server restart, after 24 hours without a message or membership/management action, or when the last member leaves. If an owner’s anonymous session expires or is banned, ownership passes to the earliest remaining member. History retains up to 100 messages, subject to a 4 MiB ciphertext budget per room and a 32 MiB total room-history budget.
+
 ### Privacy and identity
 
 A random alias means you do not have to provide an account or real name, but it does not make you untraceable. The server can see connection IP addresses, aliases, who is talking to whom, message times, encrypted data sizes, and reply or attachment relationships. A hosting provider or reverse proxy may keep its own logs. What you write or show in an image could identify you as well.
@@ -91,5 +101,7 @@ Run **one server process / one replica**. Sessions and message histories are hel
 ### Verify
 
 Run `npm test` for crypto, storage, and integration tests covering authentication, tampering, verification codes, ownership, expiry, quotas, real-time delivery, private-history isolation, admin permissions, input limits, room persistence, deletion, and origin protection.
+
+Run `npm run test:groups:browser` for the temporary-room browser flow, including open and invite-only access, encryption, replies, identity checks, participation counts, ownership transfer, kicks, reloads, and desktop/mobile layout. These browser checks require Playwright Chromium, just like `npm run test:browser`.
 
 For browser tests, install dependencies with `npm ci`, install Chromium with `npx playwright install chromium`, and run `npm run test:browser`. You can use an existing browser by setting `CHROMIUM_PATH` (for example, `CHROMIUM_PATH=/usr/bin/chromium npm run test:browser`). Browser checks use temporary data and isolated profiles; they do not use your normal browser profile or a running chat instance.

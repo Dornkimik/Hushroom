@@ -163,8 +163,11 @@ test('anonymous public chat, private isolation, admin control and persistence', 
     const d = await visitor();
     assert.equal((await request(a, 'admin/login', { password: 'integration-test-password' })).status, 200);
     assert.equal((await request(a, 'admin/ban', { id: d.me.id })).status, 200);
+    assert.equal((await request(a, 'groups/create', { name: 'Temporary room', access: 'open' })).status, 200);
+    assert.equal((await request(a, 'groups')).data.length, 1);
     for (const s of streams) s.abort(); await stop(); await boot();
     const fresh = await visitor(); assert.ok(fresh.rooms.some(r => r.name === 'Music room')); assert.ok(!fresh.rooms.some(r => r.name === 'Reading room'));
+    assert.deepEqual(fresh.groups, []);
     assert.equal((await request(d, 'session')).status, 403);
     assert.deepEqual((await request(fresh, `history?room=${room}`)).data, []);
     assert.equal((await request(a, `history?room=${room}`)).status, 401);
