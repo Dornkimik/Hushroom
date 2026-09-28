@@ -196,7 +196,7 @@ $('#image-input').onchange = async () => {
   clearPendingImage(); const version = imageRevision;
   imagePreparing = true; updateComposerState(); error(); status('Preparing image locally…');
   try {
-    const image = await HushImages.prepare(file);
+    const image = await SilenzaImages.prepare(file);
     if (version !== imageRevision) return;
     pendingImage = { ...image, url: URL.createObjectURL(image.blob) };
     $('#image-preview img').src = pendingImage.url;
@@ -218,7 +218,7 @@ function renderPrivateImage(message, content) {
       const response = await fetch(`/api/attachments/${encodeURIComponent(message.image.id)}`, { signal: controller.signal, cache: 'no-store' });
       if (!response.ok) throw new Error('Image expired or unavailable.');
       const bytes = new Uint8Array(await response.arrayBuffer());
-      const plain = HushCrypto.decryptImage(bytes, message.image);
+      const plain = SilenzaCrypto.decryptImage(bytes, message.image);
       // Only our raster format is rendered, never SVG/HTML or a server-provided MIME type.
       if (String.fromCharCode(...plain.subarray(0, 4)) !== 'RIFF' || String.fromCharCode(...plain.subarray(8, 12)) !== 'WEBP') throw new Error('Invalid private image.');
       if (version !== revision || controller.signal.aborted || !messages.some(m => m.id === message.id) || message.attachment.expiresAt <= Date.now()) throw new Error('Image no longer available.');
@@ -290,7 +290,7 @@ $('#composer').onsubmit = async event => {
       let attachment = null;
       if (image) {
         status('Encrypting image…');
-        const encrypted = HushCrypto.encryptImage(new Uint8Array(await image.blob.arrayBuffer()));
+        const encrypted = SilenzaCrypto.encryptImage(new Uint8Array(await image.blob.arrayBuffer()));
         status('Uploading encrypted image…');
         const response = await fetch(`/api/attachments?peer=${encodeURIComponent(target.peer)}`, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: encrypted.bytes });
         const result = await response.json(); if (!response.ok) throw new Error(result.error || 'Could not upload image.');
@@ -424,7 +424,7 @@ $('#confirm-ban').onclick = async () => { $('#confirm-ban').disabled = true; try
 async function start() {
   try {
     const data = await api('session'); me = data.me; rooms = data.rooms; people = data.people;
-    try { encryptionClient = await HushCrypto.createClient(me.id, api); } catch(e) { encryptionError = e.message; }
+    try { encryptionClient = await SilenzaCrypto.createClient(me.id, api); } catch(e) { encryptionError = e.message; }
     for (const person of data.conversations || []) conversations.set(person.id, person.alias);
     $('#my-alias').textContent = me.alias; $('.me-avatar').textContent = me.alias.split(' ').slice(0,2).map(x => x[0]).join(''); setAdmin(me.admin); renderPeople(); renderAdminPeople();
     if (me.admin) await refreshAdminState();

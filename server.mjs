@@ -86,7 +86,7 @@ const server = http.createServer(async (req, res) => {
     const origin = process.env.ORIGIN || `http://${req.headers.host}`;
     if (req.headers.origin && req.headers.origin !== origin) fail(403, 'Request origin is not allowed.');
     if (req.method !== 'GET' && req.headers.origin !== origin) fail(403, 'Request origin is not allowed.');
-    const token = req.headers.cookie?.split(';').map(x => x.trim()).find(x => x.startsWith('hush='))?.slice(5);
+    const token = req.headers.cookie?.split(';').map(x => x.trim()).find(x => x.startsWith('silenza='))?.slice(8);
     if (token && bans.has(hash(token).toString('hex'))) fail(403, 'This anonymous session has been banned.');
     let session = sessions.get(token);
     if (url.pathname === '/api/session' && req.method === 'GET') {
@@ -95,7 +95,7 @@ const server = http.createServer(async (req, res) => {
         const secret = randomBytes(32).toString('hex');
         session = { id: randomUUID(), alias: `${adjectives[Math.floor(Math.random()*adjectives.length)]} ${animals[Math.floor(Math.random()*animals.length)]} ${randomBytes(2).toString('hex')}`, streams: new Set(), room: rooms[0]?.id, seen: Date.now(), adminUntil: 0, sent: [] };
         sessions.set(secret, session);
-        res.setHeader('Set-Cookie', `hush=${secret}; HttpOnly; SameSite=Strict; Path=/${process.env.SECURE_COOKIES === 'true' ? '; Secure' : ''}`);
+        res.setHeader('Set-Cookie', `silenza=${secret}; HttpOnly; SameSite=Strict; Path=/${process.env.SECURE_COOKIES === 'true' ? '; Secure' : ''}`);
       }
       session.seen = Date.now();
       const conversations = [...sessions.values()].filter(s => s.id !== session.id && histories.has(keyFor(session, null, s.id))).map(safeUser);

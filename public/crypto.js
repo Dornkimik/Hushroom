@@ -1,7 +1,7 @@
 /* NaCl authenticated boxes; all plaintext and private keys stay in the browser. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory(require('tweetnacl'));
-  else root.HushCrypto = factory(root.nacl);
+  else root.SilenzaCrypto = factory(root.nacl);
 })(globalThis, function (nacl) {
   'use strict';
   const encode = value => new TextEncoder().encode(JSON.stringify(value));
@@ -66,15 +66,52 @@
   function verificationCode(a, b) {
     publicKey(a.publicKey); publicKey(b.publicKey);
     const pair = [a, b].map(p => [p.id, p.publicKey]).sort((x, y) => x[0].localeCompare(y[0]));
-    return Array.from(nacl.hash(encode(['hushroom-identity-v1', pair])).subarray(0, 32), b => b.toString(16).padStart(2, '0')).join('').match(/.{4}/g).join(' ');
+    return Array.from(nacl.hash(encode(['silenzachat-identity-v1', pair])).subarray(0, 32), b => b.toString(16).padStart(2, '0')).join('').match(/.{4}/g).join(' ');
   }
-  function openStore() {
+  function openDatabase(name) {
     return new Promise((resolve, reject) => {
-      const request = indexedDB.open('hushroom-private-v1', 1);
-      request.onupgradeneeded = () => { request.result.createObjectStore('identities'); request.result.createObjectStore('peers'); };
+      const request = indexedDB.open(name, 1);
+      request.onupgradeneeded = () => {
+        if (!request.result.objectStoreNames.contains('identities')) request.result.createObjectStore('identities');
+        if (!request.result.objectStoreNames.contains('peers')) request.result.createObjectStore('peers');
+      };
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(new Error('Private chats need browser storage for encryption keys.'));
     });
+  }
+  function readEntries(db, name) {
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(name, 'readonly'), store = tx.objectStore(name);
+      const keys = store.getAllKeys(), values = store.getAll();
+      tx.oncomplete = () => resolve(keys.result.map((key, index) => [key, values.result[index]]));
+      tx.onabort = tx.onerror = () => reject(new Error('Could not migrate local encryption keys.'));
+    });
+  }
+  function copyMissingEntries(db, name, entries) {
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(name, 'readwrite'), store = tx.objectStore(name), keys = store.getAllKeys();
+      keys.onsuccess = () => {
+        const existing = new Set(keys.result);
+        for (const [key, value] of entries) if (!existing.has(key)) store.put(value, key);
+      };
+      tx.oncomplete = resolve;
+      tx.onabort = tx.onerror = () => reject(new Error('Could not migrate local encryption keys.'));
+    });
+  }
+  async function openStore() {
+    const db = await openDatabase('silenzachat-private-v1');
+    let legacy;
+    try {
+      legacy = await openDatabase('hushroom-private-v1');
+      for (const name of ['identities', 'peers']) await copyMissingEntries(db, name, await readEntries(legacy, name));
+      legacy.close();
+      indexedDB.deleteDatabase('hushroom-private-v1');
+      return db;
+    } catch {
+      db.close();
+      legacy?.close();
+      return openDatabase('hushroom-private-v1');
+    }
   }
   // Read/write happen in one transaction, so simultaneous tabs cannot generate different identities.
   async function transaction(db, storeName, id, transform) {

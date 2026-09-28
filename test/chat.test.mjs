@@ -11,7 +11,7 @@ import nacl from 'tweetnacl';
 import encryption from '../public/crypto.js';
 
 test('anonymous public chat, private isolation, admin control and persistence', async () => {
-  const data = await mkdtemp(path.join(tmpdir(), 'hushroom-test-'));
+  const data = await mkdtemp(path.join(tmpdir(), 'silenzachat-test-'));
   const probe = net.createServer(); probe.listen(0, '127.0.0.1'); await once(probe, 'listening'); const port = probe.address().port; await new Promise(resolve => probe.close(resolve));
   const origin = `http://127.0.0.1:${port}`;
   let child; const streams = [];

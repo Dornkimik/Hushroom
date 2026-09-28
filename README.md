@@ -6,7 +6,7 @@ An anonymous chatroom website with live public rooms, private conversations, and
 
 1. Install Node.js 22.9 or newer (Node 24 LTS recommended).
 2. In Visual Studio Installer, enable the **Node.js development** workload.
-3. Open **Hushroom.sln** in Visual Studio. You can also use **File → Open → Folder** and choose this folder, or open it in Visual Studio Code.
+3. Open **SilenzaChat.sln** in Visual Studio. You can also use **File → Open → Folder** and choose this folder, or open it in Visual Studio Code.
 4. In a terminal opened in this folder, run `npm ci`, then `npm start`.
 5. Open **http://localhost:3000**. Keep the terminal running.
 

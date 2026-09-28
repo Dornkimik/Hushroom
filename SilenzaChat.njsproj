@@ -4,7 +4,7 @@
     <ProjectGuid>{E2F357D9-7C4A-4F22-AD48-7AB8AB214345}</ProjectGuid>
     <ProjectHome>.</ProjectHome><ProjectView>ShowAllFiles</ProjectView>
     <StartupFile>server.mjs</StartupFile><WorkingDirectory>.</WorkingDirectory>
-    <OutputPath>.</OutputPath><Name>Hushroom</Name>
+    <OutputPath>.</OutputPath><Name>SilenzaChat</Name>
     <NodejsPort>3000</NodejsPort><StartWebBrowser>True</StartWebBrowser>
     <NodejsLaunchUrl>http://localhost:3000</NodejsLaunchUrl>
     <NodeExeArguments>--env-file-if-exists=.env</NodeExeArguments>

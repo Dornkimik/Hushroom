@@ -1,11 +1,18 @@
 (() => {
-  const key = 'hushroom-theme';
+  const key = 'silenzachat-theme';
+  const legacyKey = 'hushroom-theme';
   const system = window.matchMedia('(prefers-color-scheme: dark)');
   const valid = value => ['light', 'dark', 'system'].includes(value);
   let preference = 'dark';
   try {
     const saved = localStorage.getItem(key);
+    const legacy = localStorage.getItem(legacyKey);
     if (valid(saved)) preference = saved;
+    else if (valid(legacy)) {
+      preference = legacy;
+      localStorage.setItem(key, legacy);
+    }
+    localStorage.removeItem(legacyKey);
   } catch { /* The theme still works when browser storage is unavailable. */ }
   function apply() {
     document.documentElement.dataset.theme = preference === 'system' ? (system.matches ? 'dark' : 'light') : preference;

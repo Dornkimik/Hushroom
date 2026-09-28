@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import assert from 'node:assert/strict';
 const root = fileURLToPath(new URL('..', import.meta.url));
-const data = await mkdtemp(path.join(tmpdir(), 'hushroom-browser-'));
+const data = await mkdtemp(path.join(tmpdir(), 'silenzachat-browser-'));
 const probe = net.createServer(); probe.listen(0,'127.0.0.1'); await once(probe,'listening'); const port = probe.address().port; await new Promise(r=>probe.close(r));
 const origin = `http://127.0.0.1:${port}`;
 const server = spawn(process.execPath,['server.mjs'],{cwd:root,env:{...process.env,DATA_DIR:data,PORT:String(port),HOST:'127.0.0.1',ORIGIN:origin,ADMIN_PASSWORD:'browser-test-only'},stdio:['ignore','pipe','pipe']});
@@ -18,9 +18,42 @@ try {
   browser = await chromium.launch({executablePath:process.env.CHROMIUM_PATH || undefined,headless:true,args:['--no-sandbox']});
   const [ac,bc,cc] = await Promise.all([browser.newContext({ reducedMotion: 'reduce' }),browser.newContext({ reducedMotion: 'reduce' }),browser.newContext({ reducedMotion: 'reduce' })]);
   const [a,b,c] = await Promise.all([ac.newPage(),bc.newPage(),cc.newPage()]);
+  await ac.addInitScript(() => {
+    localStorage.setItem('hushroom-theme', 'light');
+    const nativeFetch = window.fetch.bind(window);
+    const ready = new Promise((resolve, reject) => {
+      const request = indexedDB.open('hushroom-private-v1', 1);
+      request.onupgradeneeded = () => {
+        request.result.createObjectStore('identities');
+        request.result.createObjectStore('peers');
+      };
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        const db = request.result, tx = db.transaction('identities', 'readwrite');
+        tx.objectStore('identities').put({ migrationSentinel: 'preserved' }, 'migration-probe');
+        tx.oncomplete = () => { db.close(); resolve(); };
+        tx.onerror = () => reject(tx.error);
+      };
+    });
+    window.fetch = (...args) => ready.then(() => nativeFetch(...args));
+  });
   const sent=[];
   for(const page of [a,b,c]) { page.on('pageerror',e=>errors.push(e.message)); page.on('request',r=>{if(r.url().endsWith('/api/message') && r.method()==='POST') sent.push(r.postDataJSON());}); }
   await Promise.all([a.goto(origin),b.goto(origin),c.goto(origin)]);
+  assert.equal(await a.locator('html').getAttribute('data-theme'), 'light');
+  assert.equal(await a.evaluate(() => localStorage.getItem('silenzachat-theme')), 'light');
+  assert.equal(await a.evaluate(() => localStorage.getItem('hushroom-theme')), null);
+  await a.selectOption('#theme-select', 'dark');
+  const migratedKeys = await a.evaluate(() => new Promise((resolve, reject) => {
+    const request = indexedDB.open('silenzachat-private-v1');
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      const db = request.result, tx = db.transaction('identities'), get = tx.objectStore('identities').get('migration-probe');
+      get.onsuccess = () => { db.close(); resolve(get.result?.migrationSentinel); };
+      get.onerror = () => reject(get.error);
+    };
+  }));
+  assert.equal(migratedKeys, 'preserved');
   for(const page of [a,b,c]) await page.waitForFunction(()=>document.querySelector('#connection').textContent==='Connected');
   const aliasA=await a.locator('#my-alias').textContent(), aliasB=await b.locator('#my-alias').textContent();
   await a.locator('#people .person').filter({hasText:aliasB}).click();
@@ -90,7 +123,7 @@ try {
   await a.waitForFunction(()=>document.querySelector('#error').textContent.includes('Encryption identity changed'));
   assert.equal(await a.locator('#message').isDisabled(),true);
   // Losing a local key does not silently replace the registered key.
-  await returned.evaluate(async()=>{await new Promise((resolve,reject)=>{const r=indexedDB.open('hushroom-private-v1');r.onsuccess=()=>{const tx=r.result.transaction('identities','readwrite');tx.objectStore('identities').clear();tx.oncomplete=resolve;tx.onerror=reject;};});});
+  await returned.evaluate(async()=>{await new Promise((resolve,reject)=>{const r=indexedDB.open('silenzachat-private-v1');r.onsuccess=()=>{const tx=r.result.transaction('identities','readwrite');tx.objectStore('identities').clear();tx.oncomplete=resolve;tx.onerror=reject;};});});
   await returned.reload(); await returned.locator('#dms .dm-room').filter({hasText:aliasA}).click();
   await returned.waitForFunction(()=>document.querySelector('#error').textContent.includes('local encryption key does not match'));
   assert.equal(await returned.locator('#message').isDisabled(),true);

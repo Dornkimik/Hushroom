@@ -1,5 +1,5 @@
 /* Images are decoded, resized and re-encoded locally, then encrypted before upload. */
-globalThis.HushImages = {
+globalThis.SilenzaImages = {
   async prepare(file) {
     if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) throw new Error('Choose a JPEG, PNG or WebP image.');
     if (file.size > 12 * 1024 * 1024) throw new Error('Choose an image smaller than 12 MB.');
