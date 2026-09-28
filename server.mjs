@@ -122,9 +122,24 @@ const server = http.createServer(async (req, res) => {
       const peer = input.peer && [...sessions.values()].find(s => s.id === input.peer);
       if (input.peer && (!peer || peer.id === session.id)) fail(404, 'That person is no longer available.');
       if (!input.peer && !rooms.some(r => r.id === input.room)) fail(404, 'Room no longer exists.');
-      session.sent.push(Date.now());
-      const message = { id: randomUUID(), sender: session.id, alias: session.alias, text, time: new Date().toISOString(), room: peer ? null : input.room, recipient: peer?.id || null };
       const key = keyFor(session, input.room, peer?.id);
+      const original = input.replyTo == null ? null : (histories.get(key) || []).find(m => m.id === input.replyTo);
+      if (input.replyTo != null && !original) fail(400, 'That reply is no longer available in this conversation.');
+      const mentions = [];
+      const candidates = [...sessions.values()].filter(s => !peer || s.id === session.id || s.id === peer.id);
+      for (const person of candidates) {
+        const tag = `@${person.alias}`;
+        let start = text.indexOf(tag);
+        while (start !== -1) {
+          const end = start + tag.length;
+          if ((start === 0 || /\s/.test(text[start - 1])) && (end === text.length || /[\s.,!?;:()]/.test(text[end]))) mentions.push({ id: person.id, alias: person.alias, start, end });
+          start = text.indexOf(tag, end);
+        }
+      }
+      mentions.sort((a, b) => a.start - b.start);
+      session.sent.push(Date.now());
+      const message = { id: randomUUID(), sender: session.id, alias: session.alias, text, time: new Date().toISOString(), room: peer ? null : input.room, recipient: peer?.id || null, mentions,
+        reply: original ? { id: original.id, alias: original.alias, text: original.text.slice(0, 200) } : null };
       histories.set(key, [...(histories.get(key) || []), message].slice(-100));
       if (peer) { emit(session, 'message', message); emit(peer, 'message', message); }
       else broadcast('message', message);
@@ -187,6 +202,7 @@ const server = http.createServer(async (req, res) => {
           histories.set(key, history.filter(message => message.id !== input.id));
           found = true;
         }
+        for (const message of histories.get(key)) if (message.reply?.id === input.id) message.reply = { id: input.id, removed: true };
       }
       if (!found) fail(404, 'That message is no longer available.');
       broadcast('message-removed', { id: input.id });

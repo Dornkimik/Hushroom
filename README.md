@@ -58,3 +58,17 @@ Run **one server process / one replica**. Live sessions and message histories ar
 ## Verify
 
 Run `npm test`. Integration tests use separate anonymous sessions and a separate temporary data directory to check real-time public and private delivery, private-history isolation, admin permissions, input limits, room persistence, deletion, and origin protection.
+
+## Replies, mentions, emoji, and commands
+
+Choose **Reply** on a message to quote it in the same room or private conversation. Cancel the preview with ×. Quoted text is removed when the original message is moderated.
+
+Type `@` and part of an alias to tag someone. Choose a suggestion with the mouse, ↑/↓ and Enter, or Tab; Escape dismisses suggestions. Mentions use the full alias, including its unique suffix, and highlight messages for the tagged person. In private chats, only the two participants can be mentioned. The ☺ button opens a searchable emoji picker and inserts the selected emoji at the cursor.
+
+Type `/help` for command help. Unlock **Room management** before using moderation commands:
+
+- `/ban @Full Alias` bans that anonymous session. User autocomplete also works after `/ban `.
+- `/unban @Full Alias` restores a banned session; suggestions include current bans.
+- `/remove` removes the message selected with **Reply**.
+
+Ban and unban also accept an exact session ID. Commands and their feedback stay local to the sender; they are not posted as chat messages. Prefix a message with `//` to send a literal leading slash. All moderation actions retain server-side admin permission checks.
