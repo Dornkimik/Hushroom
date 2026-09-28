@@ -305,3 +305,99 @@ dialog input, #emoji-search { border: 1px solid var(--line); border-radius: 0; b
   .topbar-actions { gap: 4px; }
   .faq-dialog { padding: 20px; }
 }
+
+:root {
+  --bg: #10131d;
+  --side: #121723;
+  --panel: #1b2232;
+  --line: #293247;
+  --text: #e8edf7;
+  --muted: #929db5;
+  --accent: #8298d5;
+  --accent-soft: #252e47;
+  --accent-ink: #111827;
+  --danger: #ef8f96;
+  --danger-soft: #402b32;
+  font-family: 'Segoe UI', Aptos, ui-sans-serif, system-ui, sans-serif;
+}
+:root[data-theme="light"] {
+  --bg: #f4f6fb;
+  --side: #e9edf5;
+  --panel: #e0e6f1;
+  --line: #cbd3e2;
+  --text: #20283a;
+  --muted: #66728b;
+  --accent: #536da9;
+  --accent-soft: #dce5f6;
+  --accent-ink: #ffffff;
+  --danger: #a92d42;
+  --danger-soft: #f7e1e5;
+}
+.app { background-image: linear-gradient(145deg, #ffffff04, transparent 42%); background-size: auto; }
+.sidebar { border-right-width: 2px; }
+.sidebar::after { display: none; }
+.brand { gap: 0; font-family: inherit; font-size: 18px; font-weight: 700; letter-spacing: 0; text-transform: none; }
+.brand-icon { width: 32px; height: 32px; border: 0; border-radius: 3px; box-shadow: 2px 2px 0 var(--accent-soft); font-family: ui-monospace, monospace; }
+.brand-icon span { font-size: 11px; }
+.brand-dot { color: var(--accent); }
+.sidebar-intro, .section-label, .aside-hint, .identity small, .connection, .room-heading p, .people-caption, .room-note p, .composer-caption { font-size: 12px; }
+.section-label { text-transform: none; letter-spacing: 0; font-weight: 600; }
+.nav-room, .dm-room, .person { border-radius: 7px; }
+.nav-room.active, .dm-room.active { box-shadow: inset 2px 0 var(--accent); }
+.avatar { border-radius: 50%; }
+.me-avatar { background: var(--accent-soft); color: var(--accent); }
+.topbar { border-bottom-width: 2px; }
+.connection.live::before { width: 7px; height: 7px; border-radius: 50%; box-shadow: none; }
+#theme-select, .faq-link { border-radius: 7px; }
+#theme-select { background: var(--side); }
+.room-heading { gap: 13px; }
+.room-symbol { width: 38px; height: 38px; border: 1px solid var(--line); border-radius: 5px; font-family: inherit; font-size: 21px; }
+.room-heading .eyebrow { display: none; }
+h1 { font-size: 21px; font-weight: 650; letter-spacing: 0; }
+.room-badge { display: inline-block; border: 1px solid var(--line); border-radius: 999px; background: var(--side); font-size: 10px; letter-spacing: 0; text-transform: lowercase; }
+.welcome { padding-top: 50px; }
+.welcome h2 { font-size: 27px; font-weight: 650; letter-spacing: 0; }
+.welcome h2::before { content: none; }
+.day-divider { font-size: 12px; text-transform: none; letter-spacing: 0; }
+.chat-message { gap: 12px; }
+.message-name { color: var(--text); }
+.you-tag { padding: 0; background: transparent; color: var(--muted); }
+.composer-wrap { padding-top: 14px; }
+#composer { gap: 10px; padding: 8px 9px 8px 14px; border-width: 1px; border-radius: 12px; background: var(--side); }
+#composer:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+textarea { padding-left: 0; }
+.send-button, #emoji-toggle, #attach-image { border-radius: 8px; }
+.send-button { width: 38px; height: 38px; }
+#emoji-toggle, #attach-image { background: var(--panel); color: var(--muted); }
+.people-sidebar { border-left-width: 2px; }
+.people-header h2 { font-size: 13px; text-transform: none; letter-spacing: 0; }
+.people-header > span { min-width: 22px; padding: 3px 6px; border: 0; border-radius: 999px; background: var(--panel); text-align: center; }
+.person { border-bottom: 0; }
+.person .avatar { border: 0; }
+.room-note .privacy-copy { border-top-style: solid; }
+button, input, textarea, select { border-radius: 7px; }
+button:hover:not(:disabled) { filter: none; }
+dialog { border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 24px 80px #0005; }
+dialog::backdrop { background: #080b1380; }
+dialog h2 { font-weight: 600; letter-spacing: 0; }
+dialog input, #emoji-search { border-radius: 7px; background: var(--side); }
+.primary { border-radius: 7px; box-shadow: none; }
+.danger, .danger-small, .message-remove { border-radius: 7px; }
+.unread { border-radius: 10px; }
+.reply-preview, .reply-quote { border-radius: 7px; }
+#suggestions, #emoji-picker { border-width: 1px; border-radius: 10px; background: var(--side); }
+#suggestions button, #emoji-grid button, #emoji-search, #image-preview { border-radius: 7px; }
+#image-preview img, .private-image { border-radius: 7px; }
+#verification-code { border-radius: 8px; border-left-width: 2px; }
+.faq-section h3 { text-transform: none; letter-spacing: 0; }
+.faq-section details { border-top-style: solid; }
+@media (max-width: 1050px) {
+  .people-sidebar { border-top-width: 2px; }
+}
+@media (max-width: 600px) {
+  .sidebar { border-bottom-width: 2px; }
+  .brand { font-size: 17px; }
+  .brand-icon { width: 30px; height: 30px; }
+  .room-badge { display: none; }
+  .topbar { border-bottom-width: 2px; }
+}
