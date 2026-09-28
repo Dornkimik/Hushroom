@@ -47,9 +47,12 @@ test('anonymous public chat, private isolation, admin control and persistence', 
     await boot();
     const [a,b,c] = await Promise.all([visitor(),visitor(),visitor()]);
     assert.notEqual(a.me.id, b.me.id); assert.equal(a.me.admin, false);
+    assert.equal(a.me.displayAsAdmin, false);
+    assert.equal((await request(c, 'admin/appearance', { displayAsAdmin: true })).status, 403);
     const [ae,be,ce] = await Promise.all([events(a),events(b),events(c)]);
     const room = a.rooms[0].id;
-    const pub = await request(a, 'message', { room, text: 'Hello, everyone!' }); assert.equal(pub.status, 200);
+    const pub = await request(a, 'message', { room, text: 'Hello, everyone!', displayAsAdmin: true, admin: true }); assert.equal(pub.status, 200);
+    assert.equal(pub.data.displayAsAdmin, false); // Client-supplied admin flags cannot impersonate an admin.
     const dm = await request(a, 'message', privatePayload(a, b, '<script>private</script>')); assert.equal(dm.status, 200);
     await new Promise(resolve => setTimeout(resolve, 100));
     assert.ok(ae.some(m => m.id === dm.data.id)); assert.ok(be.some(m => m.id === dm.data.id)); assert.ok(ce.some(m => m.id === pub.data.id)); assert.ok(!ce.some(m => m.id === dm.data.id));
@@ -97,6 +100,16 @@ test('anonymous public chat, private isolation, admin control and persistence', 
     assert.ok(ae.removals.includes(dm.data.id)); assert.ok(be.removals.includes(dm.data.id)); assert.ok(!ce.removals.includes(dm.data.id));
     assert.equal((await request(a, 'admin/login', { password: 'wrong' })).status, 403);
     assert.equal((await request(a, 'admin/login', { password: 'integration-test-password' })).status, 200);
+    assert.equal((await request(a, 'session')).data.me.displayAsAdmin, false);
+    assert.equal((await request(a, 'admin/appearance', { displayAsAdmin: 'true' })).status, 400);
+    assert.equal((await request(a, 'admin/appearance', { displayAsAdmin: true })).data.displayAsAdmin, true);
+    assert.equal((await request(a, 'session')).data.me.displayAsAdmin, true);
+    const visibleAdmin = (await request(b, 'session')).data.people.find(p => p.id === a.me.id);
+    assert.equal(visibleAdmin.displayAsAdmin, true);
+    assert.equal(visibleAdmin.admin, undefined); // Do not disclose hidden admin rights to other users.
+    assert.equal((await request(a, 'admin/appearance', { displayAsAdmin: false })).data.admin, true);
+    assert.equal((await request(b, 'session')).data.people.find(p => p.id === a.me.id).displayAsAdmin, false);
+    await request(a, 'admin/appearance', { displayAsAdmin: true });
     assert.equal((await request(a, 'admin/ban', { id: a.me.id })).status, 400);
     await new Promise(resolve => setTimeout(resolve, 100)); assert.ok(ae.removals.includes(pub.data.id)); assert.ok(ce.removals.includes(pub.data.id));
     const remaining = (await request(c, `history?room=${room}`)).data;
@@ -113,6 +126,7 @@ test('anonymous public chat, private isolation, admin control and persistence', 
     assert.equal((await request(b, 'message', privatePayload(b, a, 'stolen upload', { image }))).status, 404);
     const payload = privatePayload(a, b, 'encrypted caption', { image });
     const sentImage = await request(a, 'message', payload); assert.equal(sentImage.status, 200);
+    assert.equal(sentImage.data.displayAsAdmin, true);
     assert.equal((await request(a, 'message', payload)).data.id, payload.id); // Safe network retry.
     assert.equal((await fetch(imageURL, { headers: { Cookie: c.cookie } })).status, 404);
     assert.equal((await fetch(imageURL)).status, 401);
@@ -122,6 +136,10 @@ test('anonymous public chat, private isolation, admin control and persistence', 
     assert.deepEqual(ciphertext, encryptedImage.bytes); assert.notDeepEqual(ciphertext, plaintext);
     assert.deepEqual(encryption.decryptImage(ciphertext, decrypt(sentImage.data, b, a).image), plaintext);
     assert.equal((await request(a, 'admin/logout', {})).status, 200);
+    assert.equal((await request(a, 'session')).data.me.displayAsAdmin, false);
+    assert.equal((await request(b, 'session')).data.people.find(p => p.id === a.me.id).displayAsAdmin, false);
+    assert.equal((await request(a, 'admin/appearance', { displayAsAdmin: true })).status, 403);
+    assert.equal((await request(b, `history?peer=${a.me.id}`)).data.find(m => m.id === sentImage.data.id).displayAsAdmin, false);
     assert.equal((await request(b, 'message/delete', { id: sentImage.data.id })).status, 404);
     assert.equal((await request(a, 'message/delete', { id: sentImage.data.id })).status, 200);
     assert.equal((await request(a, 'admin/login', { password: 'integration-test-password' })).status, 200);

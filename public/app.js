@@ -13,6 +13,11 @@ async function api(url, data) {
 }
 function error(message = '') { $('#error').textContent = message; $('#error').hidden = !message; }
 function element(tag, className, text) { const e = document.createElement(tag); e.className = className; if (text !== undefined) e.textContent = text; return e; }
+function username(alias, className, displayAsAdmin) {
+  const name = element('span', `${className}${displayAsAdmin ? ' admin-name' : ''}`, alias);
+  if (displayAsAdmin) name.append(element('small', 'admin-badge', 'ADMIN'));
+  return name;
+}
 function avatar(alias, own = false) { return element('span', `avatar${own ? ' me-avatar' : ''}`, alias.split(' ').slice(0,2).map(s => s[0]).join('')); }
 function renderRooms() {
   $('#room-count').textContent = rooms.length;
@@ -30,7 +35,7 @@ function renderPeople() {
   $('#people').replaceChildren(...people.map(person => {
     const own = person.id === me.id;
     const button = element('button', 'person'); button.disabled = own;
-    button.append(avatar(person.alias, own), element('span', 'person-name', person.alias), element(own ? 'small' : 'span', own ? '' : 'person-arrow', own ? 'you' : '↗'));
+    button.append(avatar(person.alias, own), username(person.alias, 'person-name', person.displayAsAdmin), element(own ? 'small' : 'span', own ? '' : 'person-arrow', own ? 'you' : '↗'));
     button.title = own ? 'This is you' : `Chat privately with ${person.alias}`;
     button.onclick = () => { conversations.set(person.id, person.alias); select({ peer: person.id }); }; return button;
   }));
@@ -39,7 +44,7 @@ function renderDMs() {
   $('#dm-hint').hidden = conversations.size > 0;
   $('#dms').replaceChildren(...[...conversations].map(([id, alias]) => {
     const button = element('button', `dm-room${current?.peer === id ? ' active' : ''}`);
-    button.append(element('span', '', '↗'), element('span', 'name', alias));
+    button.append(element('span', '', '↗'), username(alias, 'name', people.find(p => p.id === id)?.displayAsAdmin));
     if (unread.get(id)) button.append(element('span', 'unread', unread.get(id)));
     button.onclick = () => select({ peer: id }); return button;
   }));
@@ -88,7 +93,8 @@ function renderMessages() {
   $('#messages').replaceChildren(...messages.map(message => {
     const own = message.sender === me.id;
     const row = element('article', 'chat-message'), content = element('div', 'message-content'), meta = element('div', 'message-meta');
-    meta.append(element('span', 'message-name', message.alias));
+    const displayAsAdmin = (own ? me : people.find(person => person.id === message.sender))?.displayAsAdmin ?? message.displayAsAdmin;
+    meta.append(username(message.alias, 'message-name', displayAsAdmin));
     if (own) meta.append(element('span', 'you-tag', 'YOU'));
     meta.append(element('time', 'message-time', new Date(message.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })));
     row.id = `message-${message.id}`;
@@ -381,7 +387,27 @@ document.addEventListener('click', event => { if (!event.target.closest('.compos
 for (const close of document.querySelectorAll('.close-dialog')) close.onclick = () => close.closest('dialog').close();
 $('#privacy-button').onclick = $('#faq-button').onclick = () => $('#privacy-dialog').showModal();
 $('#open-admin').onclick = () => { $('#admin-error').textContent = ''; $('#admin-dialog').showModal(); };
-function setAdmin(admin) { me.admin = admin; $('#admin-login').hidden = admin; $('#admin-controls').hidden = !admin; }
+function setAdmin(admin) {
+  me.admin = admin;
+  if (!admin) me.displayAsAdmin = false;
+  $('#admin-login').hidden = admin; $('#admin-controls').hidden = !admin;
+  $('#display-as-admin').checked = Boolean(me.displayAsAdmin);
+  $('#my-alias').replaceChildren(username(me.alias, '', me.displayAsAdmin));
+}
+function updateAppearance(person) {
+  for (const message of messages) if (message.sender === person.id) {
+    message.displayAsAdmin = person.displayAsAdmin;
+    // Update only the name so reading position and loaded images are preserved.
+    document.getElementById(`message-${message.id}`)?.querySelector('.message-name')?.replaceWith(username(message.alias, 'message-name', person.displayAsAdmin));
+  }
+}
+function updateSession(session) { Object.assign(me, session); setAdmin(me.admin); updateAppearance(me); renderMessages(); }
+$('#display-as-admin').onchange = async event => {
+  const toggle = event.target; toggle.disabled = true;
+  try { updateSession(await api('admin/appearance', { displayAsAdmin: toggle.checked })); $('#admin-error').textContent = ''; }
+  catch(e) { toggle.checked = Boolean(me.displayAsAdmin); $('#admin-error').textContent = e.message; }
+  finally { toggle.disabled = false; }
+};
 async function refreshAdminState() {
   if (!me?.admin) return;
   try {
@@ -394,7 +420,7 @@ function renderAdminPeople() {
   const list = $('#admin-people'); if (!list) return;
   list.replaceChildren(...people.map(person => {
     const row = element('div', 'admin-person'), button = element('button', 'danger-small', 'Ban');
-    row.append(element('span', '', `${person.alias}${person.id === me?.id ? ' (you)' : ''}`), button);
+    row.append(username(`${person.alias}${person.id === me?.id ? ' (you)' : ''}`, '', person.displayAsAdmin), button);
     button.disabled = person.id === me?.id;
     button.onclick = () => { banning = person; $('#ban-description').textContent = `“${person.alias}” will be disconnected and this browser session will no longer be able to rejoin. Other anonymous sessions are unaffected.`; $('#ban-error').textContent = ''; $('#ban-dialog').showModal(); };
     return row;
@@ -411,8 +437,8 @@ function renderAdminBans() {
   }));
   if (!adminBans.length) list.append(element('p', 'admin-empty', 'No banned sessions.'));
 }
-$('#admin-login').onsubmit = async event => { event.preventDefault(); try { await api('admin/login', { password: $('#admin-password').value }); $('#admin-password').value = ''; setAdmin(true); $('#admin-error').textContent = ''; await refreshAdminState(); } catch(e) { $('#admin-error').textContent = e.message; } };
-$('#admin-logout').onclick = async () => { try { await api('admin/logout', {}); setAdmin(false); renderMessages(); } catch(e) { $('#admin-error').textContent = e.message; } };
+$('#admin-login').onsubmit = async event => { event.preventDefault(); try { updateSession(await api('admin/login', { password: $('#admin-password').value })); $('#admin-password').value = ''; $('#admin-error').textContent = ''; await refreshAdminState(); } catch(e) { $('#admin-error').textContent = e.message; } };
+$('#admin-logout').onclick = async () => { try { updateSession(await api('admin/logout', {})); } catch(e) { $('#admin-error').textContent = e.message; } };
 $('#create-room').onsubmit = async event => { event.preventDefault(); const button = $('#create-room button'); button.disabled = true; try { await api('admin/create', { name: $('#new-room').value, description: $('#new-description').value }); $('#create-room').reset(); $('#admin-error').textContent = ''; } catch(e) { $('#admin-error').textContent = e.message; } finally { button.disabled = false; } };
 function renderAdminRooms() {
   $('#admin-rooms').replaceChildren(...rooms.map(room => { const row = element('div', 'admin-room'), button = element('button', 'delete-room', 'Remove'); row.append(element('span', '', room.name), button); button.onclick = () => { deleting = room.id; $('#delete-description').textContent = `“${room.name}” and its message history will be removed for everyone. This cannot be undone.`; $('#delete-error').textContent = ''; $('#delete-dialog').showModal(); }; return row; }));
@@ -433,7 +459,9 @@ async function start() {
     stream.onopen = () => { $('#connection').textContent = 'Connected'; $('#connection').classList.add('live'); if (current) select(current); };
     stream.onerror = () => { $('#connection').textContent = 'Reconnecting…'; $('#connection').classList.remove('live'); };
     stream.addEventListener('identity-ready', event => { const { id } = JSON.parse(event.data); if (current?.peer === id && !peerIdentity) select(current); });
-    stream.addEventListener('people', event => { people = JSON.parse(event.data); renderPeople(); renderAdminPeople(); });
+    stream.addEventListener('session', event => updateSession(JSON.parse(event.data)));
+    stream.addEventListener('appearance', event => updateAppearance(JSON.parse(event.data)));
+    stream.addEventListener('people', event => { people = JSON.parse(event.data); for (const person of people) updateAppearance(person); renderPeople(); renderDMs(); renderAdminPeople(); });
     stream.addEventListener('rooms', event => { rooms = JSON.parse(event.data); if (current?.room && !rooms.some(r => r.id === current.room)) { select(rooms[0] ? { room: rooms[0].id } : null); error('That room was removed by the host.'); } else if (!current && rooms[0]) select({ room: rooms[0].id }); else { renderRooms(); updateHeading(); } });
     stream.addEventListener('message', event => receive(JSON.parse(event.data)));
     stream.addEventListener('message-removed', event => applyRemoval(JSON.parse(event.data)));

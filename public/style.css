@@ -83,6 +83,12 @@ h1 { margin: 0 0 5px; font-size: 21px; font-weight: 600; letter-spacing: -.6px; 
 .message-content { flex: 1; min-width: 0; }
 .message-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 9px; margin: 0 0 6px; }
 .message-name { font-size: 13px; font-weight: 600; }
+span.admin-name { color: var(--danger); font-weight: 800; }
+.admin-name .admin-badge { display: inline-block; margin: 0 0 0 6px; color: inherit; font-size: 9px; font-weight: 800; letter-spacing: .04em; vertical-align: middle; }
+.admin-appearance { margin-bottom: 20px; }
+.admin-appearance .admin-toggle { display: flex; align-items: center; gap: 9px; cursor: pointer; }
+.admin-toggle input { width: 18px; height: 18px; margin: 0; padding: 0; accent-color: var(--danger); }
+.admin-appearance p { color: var(--muted); font-size: 12px; line-height: 1.6; }
 .message-time { color: var(--muted); font-size: 11px; }
 .message-text { margin: 0; font-size: 14px; line-height: 1.75; white-space: pre-wrap; overflow-wrap: anywhere; }
 .you-tag { color: var(--muted); font-size: 10px; text-transform: lowercase; }
