@@ -57,6 +57,24 @@
     const key = nacl.randomBytes(32), nonce = nacl.randomBytes(24);
     return { bytes: nacl.secretbox(bytes, nonce, key), key: base64(key), nonce: base64(nonce) };
   }
+  function encryptGroupMessage({ id, group, version, sender, text, replyTo = null, image = null }, identity, members) {
+    if (typeof group !== 'string' || !Number.isInteger(version) || version < 1 || !members.some(p => p.id === sender)) throw new Error('Invalid room membership.');
+    const content = validateContent({ v: 1, text, replyTo, image });
+    return Object.fromEntries(members.map(person => {
+      const value = { ...content, kind: 'group', id, group, version, sender, recipient: person.id };
+      const nonce = nacl.randomBytes(24);
+      return [person.id, { v: 1, nonce: base64(nonce), ciphertext: base64(nacl.box(encode(value), nonce, publicKey(person.publicKey), identity.secretKey)) }];
+    }));
+  }
+  function decryptGroupMessage(message, ownId, identity, senderKey) {
+    if (!message.group || message.encrypted?.v !== 1) throw new Error('Invalid encrypted room message.');
+    const bytes = nacl.box.open(unbase64(message.encrypted.ciphertext), unbase64(message.encrypted.nonce, 24), publicKey(senderKey), identity.secretKey);
+    if (!bytes) throw new Error('This room message could not be authenticated.');
+    const value = validateContent(decode(bytes));
+    if (value.kind !== 'group' || value.id !== message.id || value.group !== message.group || value.version !== message.version ||
+        value.sender !== message.sender || value.recipient !== ownId || value.replyTo !== (message.reply?.id || null) || (value.image?.id || null) !== (message.attachment?.id || null)) throw new Error('Room message metadata did not match.');
+    return { text: value.text, image: value.image };
+  }
   function decryptImage(bytes, image) {
     if (bytes.length !== image.size + 16) throw new Error('Invalid encrypted image size.');
     const plain = nacl.secretbox.open(bytes, unbase64(image.nonce, 24), unbase64(image.key, 32));
@@ -132,18 +150,27 @@
     const identity = await transaction(db, 'identities', id, existing => existing || nacl.box.keyPair());
     const ownKey = base64(identity.publicKey);
     await api('identity', { publicKey: ownKey });
-    async function peer(peerId) {
-      const remote = await api(`identity?peer=${encodeURIComponent(peerId)}`);
+    async function trust(remote) {
       publicKey(remote.publicKey);
-      return transaction(db, 'peers', `${id}:${peerId}`, existing => {
+      if (remote.id === id && remote.publicKey !== ownKey) throw new Error('Your encryption identity changed.');
+      return transaction(db, 'peers', `${id}:${remote.id}`, existing => {
         if (existing && existing.publicKey !== remote.publicKey) throw new Error('Encryption identity changed. Private chat is blocked.');
-        return existing || { id: peerId, publicKey: remote.publicKey, verified: false };
+        return existing || { id: remote.id, publicKey: remote.publicKey, verified: false };
       });
     }
+    async function peer(peerId) { return trust(await api(`identity?peer=${encodeURIComponent(peerId)}`)); }
     return {
       peer,
       encrypt: (data, person) => encryptMessage(data, identity, person.publicKey),
       decrypt: (message, person) => decryptMessage(message, id, identity, person.publicKey),
+      encryptGroup: async (data, members) => {
+        const trusted = await Promise.all(members.map(trust));
+        return encryptGroupMessage(data, identity, trusted);
+      },
+      decryptGroup: async message => {
+        const person = await trust({ id: message.sender, publicKey: message.senderKey });
+        return decryptGroupMessage(message, id, identity, person.publicKey);
+      },
       code: person => verificationCode({ id, publicKey: ownKey }, person),
       verify: async person => transaction(db, 'peers', `${id}:${person.id}`, existing => {
         if (!existing || existing.publicKey !== person.publicKey) throw new Error('Encryption identity changed.');
@@ -151,5 +178,5 @@
       })
     };
   }
-  return { base64, unbase64, publicKey, encryptMessage, decryptMessage, encryptImage, decryptImage, verificationCode, createClient };
+  return { base64, unbase64, publicKey, encryptMessage, decryptMessage, encryptGroupMessage, decryptGroupMessage, encryptImage, decryptImage, verificationCode, createClient };
 });

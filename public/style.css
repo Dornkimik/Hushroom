@@ -407,3 +407,29 @@ dialog input, #emoji-search { border-radius: 7px; background: var(--side); }
   .room-badge { display: none; }
   .topbar { border-bottom-width: 2px; }
 }
+
+/* Temporary encrypted rooms */
+.group-label { align-items: center; gap: 6px; }
+#create-group { padding: 5px; background: var(--accent-soft); color: var(--accent); font-size: 12px; white-space: nowrap; }
+.group-hint { color: var(--muted); font-size: 12px; line-height: 1.6; }
+#group-dialog { width: min(620px, calc(100vw - 32px)); }
+#group-dialog textarea, #group-dialog select { width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--side); }
+#group-dialog textarea { min-height: 90px; resize: vertical; }
+#group-dialog .primary { margin-top: 12px; }
+.group-invite { display: flex; gap: 8px; }
+.group-member { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px; padding: 14px 0; border-top: 1px solid var(--line); }
+.group-member-info { min-width: 0; overflow-wrap: anywhere; }
+.group-member-info > small { display: block; margin-top: 5px; color: var(--muted); }
+.group-member-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+#group-error { color: var(--danger); font-size: 13px; }
+#group-details { margin-left: auto; }
+#room-rules { margin: 0; padding: 12px 32px; border-bottom: 1px solid var(--line); color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 120px; overflow: auto; }
+@media (max-width: 600px) {
+  .sidebar .group-label { display: flex; margin: 8px 0; }
+  #groups { display: flex; flex-wrap: wrap; gap: 4px; }
+  #groups .group-room { width: auto; max-width: 100%; }
+  .room-heading { flex-wrap: wrap; }
+  #group-details { margin-left: 0; }
+  #room-rules { padding: 10px 20px; }
+  #group-dialog select, #group-dialog textarea { font-size: 16px; }
+}

@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import nacl from 'tweetnacl';
 import { Attachments } from './lib/attachments.mjs';
+import { Groups } from './lib/groups.mjs';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const dataDir = process.env.DATA_DIR || path.join(root, 'data');
@@ -40,6 +41,7 @@ const roomList = () => rooms.map(r => ({ ...r, count: [...sessions.values()].fil
 const publishRooms = () => broadcast('rooms', roomList());
 const publicSession = s => ({ ...safeUser(s), admin: s.adminUntil > Date.now() });
 const publishAppearance = s => { emit(s, 'session', publicSession(s)); broadcast('appearance', safeUser(s)); presence(); };
+const groups = new Groups({ emit, broadcast, safeUser, attachments, findUser: id => [...sessions.values()].find(s => s.id === id) });
 const keyFor = (s, room, peer) => peer ? `dm:${[s.id, peer].sort().join(':')}` : `room:${room}`;
 let saveQueue = Promise.resolve();
 function saveBans() {
@@ -67,9 +69,9 @@ function base64Bytes(value, length, maximum = length) {
   if (bytes.toString('base64') !== value || (length !== null ? bytes.length !== length : bytes.length < 17 || bytes.length > maximum)) return null;
   return bytes;
 }
-async function body(req) {
+async function body(req, maximum = 32768) {
   let text = '';
-  for await (const chunk of req) { text += chunk; if (Buffer.byteLength(text) > 32768) fail(413, 'That request is too large.'); }
+  for await (const chunk of req) { text += chunk; if (Buffer.byteLength(text) > maximum) fail(413, 'That request is too large.'); }
   try { const parsed = JSON.parse(text); if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) fail(400, 'Invalid request.'); return parsed; } catch { fail(400, 'Invalid request.'); }
 }
 const server = http.createServer(async (req, res) => {
@@ -80,7 +82,7 @@ const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, 'http://localhost');
     if (!url.pathname.startsWith('/api/')) {
-      const files = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/crypto.js': ['crypto.js', 'text/javascript'], '/private.js': ['private.js', 'text/javascript'], '/vendor/nacl.js': ['../node_modules/tweetnacl/nacl-fast.min.js', 'text/javascript'], '/theme.js': ['theme.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'], '/favicon.svg': ['favicon.svg', 'image/svg+xml'] };
+      const files = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/groups.js': ['groups.js', 'text/javascript'], '/crypto.js': ['crypto.js', 'text/javascript'], '/private.js': ['private.js', 'text/javascript'], '/vendor/nacl.js': ['../node_modules/tweetnacl/nacl-fast.min.js', 'text/javascript'], '/theme.js': ['theme.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'], '/favicon.svg': ['favicon.svg', 'image/svg+xml'] };
       if (req.method !== 'GET' || !files[url.pathname]) fail(404, 'Not found.');
       const [file, type] = files[url.pathname];
       res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'no-cache' }); res.end(await readFile(path.join(root, 'public', file))); return;
@@ -101,16 +103,34 @@ const server = http.createServer(async (req, res) => {
       }
       session.seen = Date.now();
       const conversations = [...sessions.values()].filter(s => s.id !== session.id && histories.has(keyFor(session, null, s.id))).map(safeUser);
-      json({ me: publicSession(session), rooms: roomList(), people: [...sessions.values()].filter(online).map(safeUser), conversations }); return;
+      json({ me: publicSession(session), rooms: roomList(), groups: groups.list(session), people: [...sessions.values()].filter(online).map(safeUser), conversations }); return;
     }
     if (!session) fail(401, 'Your anonymous session expired. Refresh to rejoin.');
     session.seen = Date.now();
+    if (url.pathname === '/api/groups' || url.pathname.startsWith('/api/groups/')) {
+      const action = url.pathname.slice('/api/groups'.length).replace(/^\//, '');
+      const input = req.method === 'POST' ? await body(req, action === 'message' ? 512000 : 32768) : Object.fromEntries(url.searchParams);
+      // Recheck after reading the request, since a ban may occur during a slow upload.
+      if (sessions.get(token) !== session) fail(403, 'This session is no longer available.');
+      json(groups.handle(req.method, action, session, input)); return;
+    }
     if (url.pathname === '/api/identity' && req.method === 'GET') {
       const peer = [...sessions.values()].find(s => s.id === url.searchParams.get('peer'));
       if (!peer?.publicKey) fail(409, 'This person has not enabled private encryption yet. They need to open or refresh SilenzaChat.');
       json({ id: peer.id, publicKey: peer.publicKey }); return;
     }
     if (url.pathname === '/api/attachments' && req.method === 'POST') {
+      if (url.searchParams.has('group')) {
+        const group = groups.get(url.searchParams.get('group')), version = Number(url.searchParams.get('version'));
+        groups.member(group, session);
+        if (!session.publicKey || version !== group.version) fail(409, 'Room membership changed. Try sending again.');
+        if (req.headers['content-type'] !== 'application/octet-stream') fail(415, 'Upload encrypted image bytes only.');
+        const uploaded = await attachments.upload(req, session.id, null, { group: group.id, version });
+        if (sessions.get(token) !== session || groups.rooms.get(group.id) !== group || group.updated + 86400000 <= Date.now() || !group.members.has(session.id) || group.version !== version) {
+          attachments.remove(uploaded.id); fail(409, 'Room membership changed during upload. Try sending again.');
+        }
+        json(uploaded); return;
+      }
       const peer = [...sessions.values()].find(s => s.id === url.searchParams.get('peer'));
       if (!peer || peer.id === session.id) fail(404, 'That person is no longer available.');
       if (!session.publicKey || !peer.publicKey) fail(409, 'Both people need encryption identities before uploading.');
@@ -122,6 +142,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname.startsWith('/api/attachments/')) {
       const id = url.pathname.slice('/api/attachments/'.length), item = attachments.get(id, session.id);
+      if (item.group && req.method === 'GET') groups.checkAttachment(item, session);
       if (req.method === 'GET') {
         res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': item.bytes.length, 'Cache-Control': 'no-store', 'Content-Disposition': 'attachment' }); res.end(item.bytes); return;
       }
@@ -131,7 +152,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/events' && req.method === 'GET') {
       if (session.streams.size >= 6) fail(429, 'Too many open tabs.');
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
-      res.write(': connected\n\n'); session.streams.add(res); presence(); publishRooms();
+      res.write(': connected\n\n'); session.streams.add(res); presence(); publishRooms(); emit(session, 'groups-changed', {});
       const timer = setInterval(() => { session.seen = Date.now(); res.write(': heartbeat\n\n'); }, 20000);
       res.on('close', () => { clearInterval(timer); session.streams.delete(res); presence(); publishRooms(); }); return;
     }
@@ -264,7 +285,7 @@ const server = http.createServer(async (req, res) => {
       bans.set(key, { key, id: person.id, alias: person.alias, bannedAt: new Date().toISOString() });
       try { await saveBans(); } catch (error) { bans.delete(key); throw error; }
       for (const stream of person.streams) stream.end();
-      sessions.delete(targetToken); attachments.removeUser(person.id); presence(); publishRooms(); broadcast('moderation', {});
+      sessions.delete(targetToken); groups.removeUser(person.id); attachments.removeUser(person.id); presence(); publishRooms(); broadcast('moderation', {});
       json({ ok: true }); return;
     }
     if (url.pathname === '/api/admin/unban') {
@@ -301,9 +322,10 @@ setInterval(() => {
     publishAppearance(s);
   }
   for (const [token, s] of sessions) if (!online(s) && Date.now() - s.seen > 86400000) {
-    sessions.delete(token); attachments.removeUser(s.id); for (const key of histories.keys()) if (key.startsWith('dm:') && key.includes(s.id)) histories.delete(key);
+    sessions.delete(token); groups.removeUser(s.id); attachments.removeUser(s.id); for (const key of histories.keys()) if (key.startsWith('dm:') && key.includes(s.id)) histories.delete(key);
   }
   attachments.sweep();
+  groups.sweep();
   for (const [ip, a] of attempts) if (Date.now() > a.reset) attempts.delete(ip);
 }, 60000).unref();
 server.listen(Number(process.env.PORT || 3000), process.env.HOST || '127.0.0.1', () => {
