@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import assert from 'node:assert/strict';
+import { auditImages } from './image-privacy-audit.mjs';
 const root = fileURLToPath(new URL('..', import.meta.url));
 const data = await mkdtemp(path.join(tmpdir(), 'silenzachat-browser-'));
 const probe = net.createServer(); probe.listen(0,'127.0.0.1'); await once(probe,'listening'); const port = probe.address().port; await new Promise(r=>probe.close(r));
@@ -71,7 +72,9 @@ try {
   await a.locator('#confirm-verification').click(); await b.locator('#confirm-verification').click();
   assert.match(await a.locator('#encryption-status').textContent(),/Identity verified/);
   // Encrypt a locally generated raster image. The original filename must never leave the browser.
+  const imageAudit = await auditImages(a);
   const image=await a.evaluate(()=>{const canvas=document.createElement('canvas');canvas.width=160;canvas.height=100;const ctx=canvas.getContext('2d');ctx.fillStyle='#326b50';ctx.fillRect(0,0,160,100);return canvas.toDataURL('image/png').split(',')[1];});
+  await imageAudit.assertFailsClosed(Buffer.from(image, 'base64'));
   await a.locator('#image-input').setInputFiles({name:'private-filename.png',mimeType:'image/png',buffer:Buffer.from(image,'base64')});
   await a.locator('#image-preview').waitFor({state:'visible'});
   await a.locator('#message').fill('secret image caption'); await a.locator('.send-button').click();
@@ -182,6 +185,8 @@ try {
   await returned.waitForFunction(()=>document.querySelector('#error').textContent.includes('local encryption key does not match'));
   assert.equal(await returned.locator('#message').isDisabled(),true);
   assert.deepEqual(errors,[]);
+  const auditedImages = await imageAudit.verify(Buffer.from(image, 'base64'), 'private-filename.png');
+  console.log(`PASS: ${auditedImages} private image uploads contain exact ciphertext; server returns unchanged ciphertext; no image plaintext or secret keys in captured requests`);
   console.log('PASS: private text, encrypted image, replies, third-party isolation, reload, shared-tab keys, matching verification codes, offline delivery, key-change/key-loss blocking, private draft isolation, owner deletion and attachment cleanup, desktop/mobile rendering');
 } finally {
   await browser?.close(); server.kill(); await once(server,'exit'); await rm(data,{recursive:true,force:true});
