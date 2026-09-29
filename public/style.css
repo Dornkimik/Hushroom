@@ -430,7 +430,7 @@ dialog input, #emoji-search { border-radius: 7px; background: var(--side); }
 #create-group { padding: 5px; background: var(--accent-soft); color: var(--accent); font-size: 12px; white-space: nowrap; }
 .group-hint { color: var(--muted); font-size: 12px; line-height: 1.6; }
 #group-dialog { width: min(620px, calc(100vw - 32px)); }
-#group-dialog textarea, #group-dialog select { width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--side); }
+#group-dialog textarea, #group-dialog select, #moderate-group-dialog textarea, #moderate-group-dialog select { width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--side); }
 #group-dialog textarea { min-height: 90px; resize: vertical; }
 #group-dialog .primary { margin-top: 12px; }
 .group-invite { display: flex; gap: 8px; }

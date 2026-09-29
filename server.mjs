@@ -184,7 +184,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === '/api/admin/state' && req.method === 'GET') {
       if (session.adminUntil <= Date.now()) fail(403, 'Unlock admin controls first.');
-      json({ people: [...sessions.values()].filter(online).map(safeUser), bans: [...bans.values()].map(({ id, alias, bannedAt }) => ({ id, alias, bannedAt })) }); return;
+      json({ people: [...sessions.values()].filter(online).map(safeUser), bans: [...bans.values()].map(({ id, alias, bannedAt }) => ({ id, alias, bannedAt })), groups: groups.moderate('list', session) }); return;
     }
     if (req.method !== 'POST') fail(404, 'Not found.');
     const input = await body(req);
@@ -287,6 +287,9 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === '/api/admin/logout') { session.adminUntil = 0; session.displayAsAdmin = false; publishAppearance(session); json(publicSession(session)); return; }
     if (url.pathname.startsWith('/api/admin/') && session.adminUntil <= Date.now()) fail(403, 'Unlock admin controls first.');
+    if (url.pathname === '/api/admin/groups/update' || url.pathname === '/api/admin/groups/delete') {
+      json(groups.moderate(url.pathname.split('/').pop(), session, input)); return;
+    }
     if (url.pathname === '/api/admin/feedback/update' || url.pathname === '/api/admin/feedback/delete') {
       const removing = url.pathname.endsWith('/delete');
       if (!removing && typeof input.reviewed !== 'boolean') fail(400, 'Choose a feedback status.');

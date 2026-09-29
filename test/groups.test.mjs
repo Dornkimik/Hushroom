@@ -174,3 +174,32 @@ test('temporary rooms expire, clean up removed users, and enforce limits and com
   assert.throws(() => call(c, 'create', { name: '', rules: 'x'.repeat(2001) }), /40 characters/);
   assert.throws(() => call({ ...c, publicKey: undefined }, 'create', { name: 'Unsafe' }), /encryption/);
 });
+
+
+test('admin room moderation preserves encryption boundaries and cleans up deleted rooms', async () => {
+  const { store, attachments, users: [owner, admin], call, send, events, advance } = setup();
+  const room = call(owner, 'create', { name: 'Private room', access: 'invite' });
+  assert.throws(() => store.moderate('list', admin), /Unlock/);
+  admin.adminUntil = Date.now() + 10000;
+  const message = call(owner, 'message', send(owner, room.id));
+  const upload = await attachments.upload(Readable.from([new Uint8Array(32)]), owner.id, null, { group: room.id, version: room.version });
+  assert.equal(store.moderate('list', admin)[0].id, room.id);
+  for (const invalid of [{ name: '' }, { name: 'x'.repeat(41) }, { description: 'x'.repeat(121) }, { rules: 'x'.repeat(2001) }, { access: 'invalid' }]) {
+    assert.throws(() => store.moderate('update', admin, { group: room.id, name: 'Valid', ...invalid }), /Use a name|Choose open/);
+  }
+  const changed = store.moderate('update', admin, { group: room.id, name: 'Updated', rules: 'Rules', access: 'invite' });
+  assert.equal(changed.owner, owner.id); assert.equal(changed.version, room.version);
+  assert.equal(changed.joined, false); assert.equal(changed.count, 1);
+  assert.equal(changed.history, undefined); assert.equal(changed.members, undefined);
+  assert.throws(() => call(admin, 'history', { group: room.id }, 'GET'), /Join/);
+  assert.equal(call(owner, 'history', { group: room.id }, 'GET')[0].id, message.id);
+  assert.ok(events.some(e => e.user === owner.id && e.event === 'group-state' && e.data.name === 'Updated'));
+  advance(10001);
+  assert.throws(() => store.moderate('update', admin, { group: room.id, name: 'Expired admin' }), /Unlock/);
+  assert.throws(() => store.moderate('delete', admin, { group: room.id }), /Unlock/);
+  admin.adminUntil += 20000;
+  store.moderate('delete', admin, { group: room.id });
+  assert.equal(store.bytes, 0); assert.equal(attachments.items.has(upload.id), false);
+  assert.ok(events.some(e => e.user === owner.id && e.event === 'group-removed'));
+  assert.throws(() => store.get(room.id), /expired or was deleted/);
+});

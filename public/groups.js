@@ -1,4 +1,32 @@
 let groupRooms = [], groupState = null, groupPanel = null, groupRefresh = 0;
+let adminGroups = [], moderatingGroup = null;
+function renderAdminGroups() {
+  const list = $('#admin-groups');
+  list.replaceChildren(...adminGroups.map(group => {
+    const row = element('div', 'admin-room');
+    const edit = element('button', 'text-button', 'Edit');
+    const remove = element('button', 'delete-room', 'Remove');
+    const actions = element('div', 'group-member-actions');
+    actions.append(edit, remove);
+    row.append(element('span', '', `${group.name} · ${group.access === 'invite' ? 'Invite only' : 'Open'} · ${group.count} members`), actions);
+    edit.onclick = () => {
+      moderatingGroup = group.id;
+      for (const field of ['name', 'description', 'rules', 'access']) $(`#moderate-group-${field}`).value = group[field];
+      $('#moderate-group-error').textContent = '';
+      $('#moderate-group-dialog').showModal();
+    };
+    remove.onclick = () => {
+      deleting = { id: group.id, group: true };
+      $('#delete-description').textContent = `“${group.name}” and its message history will be removed for everyone. This cannot be undone.`;
+      $('#delete-error').textContent = ''; $('#delete-dialog').showModal();
+    };
+    return row;
+  }));
+  if (!adminGroups.length) list.append(element('p', 'admin-empty', 'No user-created rooms.'));
+  if (moderatingGroup && !adminGroups.some(g => g.id === moderatingGroup)) {
+    $('#moderate-group-dialog').close(); moderatingGroup = null;
+  }
+}
 function renderGroups() {
   $('#groups').replaceChildren(...groupRooms.map(group => {
     const button = element('button', `nav-room group-room${current?.group === group.id ? ' active' : ''}`);
@@ -98,6 +126,16 @@ async function groupAction(action, extra = {}) {
   } catch(e) { $('#group-error').textContent = e.message; }
 }
 function setupGroups() {
+  $('#moderate-group-form').onsubmit = async event => {
+    event.preventDefault();
+    const button = event.currentTarget.querySelector('button'); button.disabled = true;
+    const details = Object.fromEntries(['name', 'description', 'rules', 'access'].map(field => [field, $(`#moderate-group-${field}`).value]));
+    try {
+      await api('admin/groups/update', { group: moderatingGroup, ...details });
+      $('#moderate-group-dialog').close(); await refreshAdminState();
+    } catch(e) { $('#moderate-group-error').textContent = e.message; }
+    finally { button.disabled = false; }
+  };
   $('#create-group').onclick = () => openGroup();
   $('#group-details').onclick = () => openGroup(groupState);
   $('#group-form').onsubmit = async event => {

@@ -432,7 +432,7 @@ $('#emoji-picker').onkeydown = event => { if (event.key === 'Escape') { toggleEm
 document.addEventListener('click', event => { if (!event.target.closest('.composer-wrap')) { closeSuggestions(); toggleEmoji(false); } });
 for (const close of document.querySelectorAll('.close-dialog')) close.onclick = () => close.closest('dialog').close();
 $('#privacy-button').onclick = $('#faq-button').onclick = () => $('#privacy-dialog').showModal();
-$('#open-admin').onclick = () => { $('#admin-error').textContent = ''; $('#admin-dialog').showModal(); refreshFeedback(); };
+$('#open-admin').onclick = () => { $('#admin-error').textContent = ''; $('#admin-dialog').showModal(); refreshFeedback(); refreshAdminState(); };
 let feedbackRequest = 0;
 async function refreshFeedback() {
   if (!me?.admin) return;
@@ -470,7 +470,7 @@ function setAdmin(admin) {
   $('#display-as-admin').checked = Boolean(me.displayAsAdmin);
   $('#my-alias').replaceChildren(username(me.alias, '', me.displayAsAdmin));
   if (admin) refreshFeedback();
-  else { feedbackRequest++; $('#admin-feedback').replaceChildren(); $('#feedback-count').textContent = ''; $('#feedback-inbox-status').textContent = ''; }
+  else { adminStateRequest++; adminGroups = []; renderAdminGroups(); $('#moderate-group-dialog').close(); feedbackRequest++; $('#admin-feedback').replaceChildren(); $('#feedback-count').textContent = ''; $('#feedback-inbox-status').textContent = ''; }
 }
 function updateAppearance(person) {
   for (const message of messages) if (message.sender === person.id) {
@@ -486,10 +486,14 @@ $('#display-as-admin').onchange = async event => {
   catch(e) { toggle.checked = Boolean(me.displayAsAdmin); $('#admin-error').textContent = e.message; }
   finally { toggle.disabled = false; }
 };
+let adminStateRequest = 0;
 async function refreshAdminState() {
   if (!me?.admin) return;
   try {
+    const request = ++adminStateRequest;
     const state = await api('admin/state');
+    if (!me?.admin || request !== adminStateRequest) return;
+    adminGroups = state.groups || []; renderAdminGroups();
     people = state.people; adminBans = state.bans;
     renderPeople(); renderAdminPeople(); renderAdminBans(); renderMessages();
   } catch(e) { $('#admin-error').textContent = e.message; }
@@ -519,10 +523,10 @@ $('#admin-login').onsubmit = async event => { event.preventDefault(); try { upda
 $('#admin-logout').onclick = async () => { try { updateSession(await api('admin/logout', {})); } catch(e) { $('#admin-error').textContent = e.message; } };
 $('#create-room').onsubmit = async event => { event.preventDefault(); const button = $('#create-room button'); button.disabled = true; try { await api('admin/create', { name: $('#new-room').value, description: $('#new-description').value }); $('#create-room').reset(); $('#admin-error').textContent = ''; } catch(e) { $('#admin-error').textContent = e.message; } finally { button.disabled = false; } };
 function renderAdminRooms() {
-  $('#admin-rooms').replaceChildren(...rooms.map(room => { const row = element('div', 'admin-room'), button = element('button', 'delete-room', 'Remove'); row.append(element('span', '', room.name), button); button.onclick = () => { deleting = room.id; $('#delete-description').textContent = `“${room.name}” and its message history will be removed for everyone. This cannot be undone.`; $('#delete-error').textContent = ''; $('#delete-dialog').showModal(); }; return row; }));
+  $('#admin-rooms').replaceChildren(...rooms.map(room => { const row = element('div', 'admin-room'), button = element('button', 'delete-room', 'Remove'); row.append(element('span', '', room.name), button); button.onclick = () => { deleting = { id: room.id, group: false }; $('#delete-description').textContent = `“${room.name}” and its message history will be removed for everyone. This cannot be undone.`; $('#delete-error').textContent = ''; $('#delete-dialog').showModal(); }; return row; }));
 }
 $('#cancel-delete').onclick = () => $('#delete-dialog').close();
-$('#confirm-delete').onclick = async () => { $('#confirm-delete').disabled = true; try { await api('admin/delete', { id: deleting }); $('#delete-dialog').close(); } catch(e) { $('#delete-error').textContent = e.message; } finally { $('#confirm-delete').disabled = false; } };
+$('#confirm-delete').onclick = async () => { $('#confirm-delete').disabled = true; try { await api(deleting.group ? 'admin/groups/delete' : 'admin/delete', deleting.group ? { group: deleting.id } : { id: deleting.id }); await refreshAdminState(); $('#delete-dialog').close(); } catch(e) { $('#delete-error').textContent = e.message; } finally { $('#confirm-delete').disabled = false; } };
 $('#cancel-ban').onclick = () => $('#ban-dialog').close();
 $('#confirm-ban').onclick = async () => { $('#confirm-ban').disabled = true; try { await api('admin/ban', { id: banning.id }); $('#ban-dialog').close(); await refreshAdminState(); } catch(e) { $('#ban-error').textContent = e.message; } finally { $('#confirm-ban').disabled = false; } };
 async function start() {
@@ -538,7 +542,7 @@ async function start() {
     stream.onerror = () => { $('#connection').textContent = 'Reconnecting…'; $('#connection').classList.remove('live'); };
     stream.addEventListener('identity-ready', event => { const { id } = JSON.parse(event.data); if (current?.peer === id && !peerIdentity) select(current); });
     stream.addEventListener('session', event => updateSession(JSON.parse(event.data)));
-    stream.addEventListener('groups-changed', refreshGroups);
+    stream.addEventListener('groups-changed', () => { refreshGroups(); refreshAdminState(); });
     stream.addEventListener('group-state', event => groupStateChanged(JSON.parse(event.data)));
     stream.addEventListener('group-removed', event => {
       const removed = JSON.parse(event.data); drafts.delete(`group:${removed.group}`);

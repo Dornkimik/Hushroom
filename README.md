@@ -16,7 +16,7 @@ This protection depends on trusting the website code delivered to your browser. 
 
 ### Temporary rooms
 
-Choose **＋ Create** beside **Temporary rooms** to create a user-owned room. Give it a name, description, and rules, and choose **Open to everyone** or **Invite only**. Invite-only rooms appear only to their members and invited sessions; owners invite people from **Room details & members**. Owners can edit details and access, kick members, transfer ownership to another member, or delete the room. Members can leave; an owner with other members must transfer ownership or delete the room first.
+Choose **＋ Create** beside **Temporary rooms** to create a user-owned room. Give it a name, description, and rules, and choose **Open to everyone** or **Invite only**. Invite-only rooms appear in the chat directory only to their members and invited sessions; owners invite people from **Room details & members**. Owners can edit details and access, kick members, transfer ownership to another member, or delete the room. Members can leave; an owner with other members must transfer ownership or delete the room first.
 
 Room text, images, captions, replies, and mentions are end-to-end encrypted using the same browser identities and authenticated encryption as private chats. Each message is encrypted separately for every current member, including its sender. Use **＋** to attach an image with an optional caption, and **Verify identity** beside a member to compare identity codes through another trusted channel. Names, descriptions, rules, membership, and message counts are metadata visible to the server. Open rooms can be joined by anyone, so use invite-only access for a restricted conversation.
 
@@ -98,7 +98,7 @@ Open **http://localhost:3000** and keep the terminal running. You can also open 
 
 The included local copy has a generated admin password in `.env`, on the `ADMIN_PASSWORD=` line. Enter it under **Room management** in the website. Visitors never need a password. If `.env` is absent, the terminal prints a temporary admin password.
 
-For a permanent password, copy `.env.example` to `.env`, set `ADMIN_PASSWORD` to a long, unique value, and restart the server. Keep `.env` private. Admin access expires after one hour; **Lock admin controls** ends it immediately. Hosts can manage rooms, ban or unban an active anonymous session, and remove messages. Session bans survive restarts in `data/bans.json`; clearing browser cookies creates a new session and is not prevented by a session ban.
+For a permanent password, copy `.env.example` to `.env`, set `ADMIN_PASSWORD` to a long, unique value, and restart the server. Keep `.env` private. Admin access expires after one hour; **Lock admin controls** ends it immediately. Under **User-created rooms**, admins can edit the name, description, rules, and access setting of any temporary room, including invite-only rooms, or remove it with confirmation. Changes reach members immediately; deletion removes room history and stored images. These controls do not join the admin to the room or grant access to encrypted messages. Hosts can also manage public rooms, ban or unban an active anonymous session, and remove messages. Session bans survive restarts in `data/bans.json`; clearing browser cookies creates a new session and is not prevented by a session ban.
 
 ### Deploy
 
