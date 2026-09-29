@@ -432,13 +432,45 @@ $('#emoji-picker').onkeydown = event => { if (event.key === 'Escape') { toggleEm
 document.addEventListener('click', event => { if (!event.target.closest('.composer-wrap')) { closeSuggestions(); toggleEmoji(false); } });
 for (const close of document.querySelectorAll('.close-dialog')) close.onclick = () => close.closest('dialog').close();
 $('#privacy-button').onclick = $('#faq-button').onclick = () => $('#privacy-dialog').showModal();
-$('#open-admin').onclick = () => { $('#admin-error').textContent = ''; $('#admin-dialog').showModal(); };
+$('#open-admin').onclick = () => { $('#admin-error').textContent = ''; $('#admin-dialog').showModal(); refreshFeedback(); };
+let feedbackRequest = 0;
+async function refreshFeedback() {
+  if (!me?.admin) return;
+  const request = ++feedbackRequest;
+  $('#feedback-inbox-status').textContent = 'Loading feedback…';
+  try {
+    const items = await api('admin/feedback');
+    if (!me?.admin || request !== feedbackRequest) return;
+    $('#feedback-count').textContent = `(${items.filter(item => !item.reviewed).length} new)`;
+    $('#feedback-inbox-status').textContent = items.length ? '' : 'No feedback yet.';
+    $('#admin-feedback').replaceChildren(...items.map(item => {
+      const entry = element('details', 'feedback-entry'), summary = element('summary', '', item.title);
+      summary.append(element('span', 'feedback-state', item.reviewed ? 'Reviewed' : 'New'));
+      const date = element('time', 'feedback-date', new Date(item.createdAt).toLocaleString()); date.dateTime = item.createdAt;
+      const actions = element('div', 'feedback-actions');
+      for (const [action, label] of [['update', item.reviewed ? 'Mark as new' : 'Mark reviewed'], ['delete', 'Delete']]) {
+        const button = element('button', action === 'delete' ? 'danger-small' : 'text-button', label); button.type = 'button';
+        button.onclick = async () => {
+          if (action === 'delete' && !confirm('Delete this feedback permanently?')) return;
+          button.disabled = true;
+          try { await api(`admin/feedback/${action}`, { id: item.id, reviewed: !item.reviewed }); await refreshFeedback(); }
+          catch (e) { $('#feedback-inbox-status').textContent = e.message; button.disabled = false; }
+        };
+        actions.append(button);
+      }
+      entry.append(summary, date, element('p', 'feedback-text', item.text), actions); return entry;
+    }));
+  } catch (e) { if (me?.admin && request === feedbackRequest) $('#feedback-inbox-status').textContent = e.message; }
+}
+$('#refresh-feedback').onclick = refreshFeedback;
 function setAdmin(admin) {
   me.admin = admin;
   if (!admin) me.displayAsAdmin = false;
   $('#admin-login').hidden = admin; $('#admin-controls').hidden = !admin;
   $('#display-as-admin').checked = Boolean(me.displayAsAdmin);
   $('#my-alias').replaceChildren(username(me.alias, '', me.displayAsAdmin));
+  if (admin) refreshFeedback();
+  else { feedbackRequest++; $('#admin-feedback').replaceChildren(); $('#feedback-count').textContent = ''; $('#feedback-inbox-status').textContent = ''; }
 }
 function updateAppearance(person) {
   for (const message of messages) if (message.sender === person.id) {

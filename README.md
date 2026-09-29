@@ -24,6 +24,16 @@ New members receive only future messages. Leaving and rejoining starts a new mem
 
 Rooms support up to 20 members. Each visitor can own three rooms and join up to 20. They exist only in server memory and disappear on server restart, after 24 hours without a message or membership/management action, or when the last member leaves. If an owner’s anonymous session expires or is banned, ownership passes to the earliest remaining member. History retains up to 100 messages, subject to a 4 MiB ciphertext budget per room and a 32 MiB total room-history budget.
 
+### Feedback
+
+Choose **Feedback** on the landing page or in the chat header to send a title and message. No name or email is required. Feedback is readable by site admins and saved on the server until an admin deletes it; it is not an encrypted chat message.
+
+Admins can open **Room management**, unlock the controls, and use the **Feedback** inbox at the top. Submissions appear newest first with their date and a new/reviewed status. Expand an entry to read it, mark it reviewed (or new again), or delete it. Use **Refresh** to load new submissions.
+
+The server persists feedback in `data/feedback.json` (or the configured `DATA_DIR`), including across restarts. Entries contain the title, text, timestamp, random ID, and review status, without a saved sender identity. Titles allow 120 characters and messages 5,000. Each anonymous session can submit three times per ten minutes. The inbox holds up to 1,000 entries and rejects new submissions when full; admins can delete old entries to make space. This session-based limit is basic throttling, not protection against a determined spammer creating new sessions.
+
+Run `npm run test:feedback:browser` to check submission, retries, responsive layout, and admin review/deletion. `npm test` also checks feedback access control, validation, throttling, and persistence.
+
 ### Privacy and identity
 
 A random alias means you do not have to provide an account or real name, but it does not make you untraceable. The server can see connection IP addresses, aliases, who is talking to whom, message times, encrypted data sizes, and reply or attachment relationships. A hosting provider or reverse proxy may keep its own logs. What you write or show in an image could identify you as well.

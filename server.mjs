@@ -20,6 +20,9 @@ catch (e) { if (e.code !== 'ENOENT') throw e; rooms = [
 let bans;
 try { bans = new Map(JSON.parse(await readFile(path.join(dataDir, 'bans.json'), 'utf8')).map(ban => [ban.key, ban])); }
 catch (e) { if (e.code !== 'ENOENT') throw e; bans = new Map(); }
+let feedback;
+try { feedback = JSON.parse(await readFile(path.join(dataDir, 'feedback.json'), 'utf8')); }
+catch (e) { if (e.code !== 'ENOENT') throw e; feedback = []; }
 const attachmentTTL = Number(process.env.ATTACHMENT_TTL_SECONDS || 86400) * 1000;
 if (!Number.isFinite(attachmentTTL) || attachmentTTL < 1000 || attachmentTTL > 86400000) throw new Error('ATTACHMENT_TTL_SECONDS must be between 1 and 86400.');
 const attachments = new Attachments({ ttl: attachmentTTL });
@@ -62,6 +65,16 @@ function saveRooms(transform) {
   saveQueue = job.catch(() => {});
   return job;
 }
+function saveFeedback(transform) {
+  const job = saveQueue.then(async () => {
+    const next = transform(feedback);
+    await writeFile(path.join(dataDir, 'feedback.tmp'), JSON.stringify(next, null, 2));
+    await rename(path.join(dataDir, 'feedback.tmp'), path.join(dataDir, 'feedback.json'));
+    feedback = next;
+  });
+  saveQueue = job.catch(() => {});
+  return job;
+}
 function fail(status, message) { throw Object.assign(new Error(message), { status }); }
 function base64Bytes(value, length, maximum = length) {
   if (typeof value !== 'string' || value.length > 24000) return null;
@@ -82,7 +95,7 @@ const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, 'http://localhost');
     if (!url.pathname.startsWith('/api/')) {
-      const files = { '/': ['about.html', 'text/html'], '/chat/': ['index.html', 'text/html'], '/robots.txt': ['robots.txt', 'text/plain'], '/sitemap.xml': ['sitemap.xml', 'application/xml'], '/about.css': ['about.css', 'text/css'], '/app.js': ['app.js', 'text/javascript'], '/groups.js': ['groups.js', 'text/javascript'], '/crypto.js': ['crypto.js', 'text/javascript'], '/private.js': ['private.js', 'text/javascript'], '/vendor/nacl.js': ['../node_modules/tweetnacl/nacl-fast.min.js', 'text/javascript'], '/theme.js': ['theme.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'], '/favicon.svg': ['favicon.svg', 'image/svg+xml'] };
+      const files = { '/': ['about.html', 'text/html'], '/chat/': ['index.html', 'text/html'], '/robots.txt': ['robots.txt', 'text/plain'], '/sitemap.xml': ['sitemap.xml', 'application/xml'], '/about.css': ['about.css', 'text/css'], '/feedback.js': ['feedback.js', 'text/javascript'], '/app.js': ['app.js', 'text/javascript'], '/groups.js': ['groups.js', 'text/javascript'], '/crypto.js': ['crypto.js', 'text/javascript'], '/private.js': ['private.js', 'text/javascript'], '/vendor/nacl.js': ['../node_modules/tweetnacl/nacl-fast.min.js', 'text/javascript'], '/theme.js': ['theme.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'], '/favicon.svg': ['favicon.svg', 'image/svg+xml'] };
       if (req.method === 'GET' && ['/about', '/about/', '/chat'].includes(url.pathname)) { res.writeHead(301, { Location: url.pathname === '/chat' ? '/chat/' : '/' }); res.end(); return; }
       if (req.method !== 'GET' || !files[url.pathname]) fail(404, 'Not found.');
       const [file, type] = files[url.pathname];
@@ -165,12 +178,33 @@ const server = http.createServer(async (req, res) => {
         ...message, displayAsAdmin: displaysAsAdmin(users.get(message.sender) || {})
       }))); return;
     }
+    if (url.pathname === '/api/admin/feedback' && req.method === 'GET') {
+      if (session.adminUntil <= Date.now()) fail(403, 'Unlock admin controls first.');
+      json(feedback); return;
+    }
     if (url.pathname === '/api/admin/state' && req.method === 'GET') {
       if (session.adminUntil <= Date.now()) fail(403, 'Unlock admin controls first.');
       json({ people: [...sessions.values()].filter(online).map(safeUser), bans: [...bans.values()].map(({ id, alias, bannedAt }) => ({ id, alias, bannedAt })) }); return;
     }
     if (req.method !== 'POST') fail(404, 'Not found.');
     const input = await body(req);
+    if (url.pathname === '/api/feedback') {
+      if (sessions.get(token) !== session) fail(403, 'This session is no longer available.');
+      const title = typeof input.title === 'string' ? input.title.trim() : '';
+      const text = typeof input.text === 'string' ? input.text.trim() : '';
+      if (!title || title.length > 120 || !text || text.length > 5000) fail(400, 'Add a title (up to 120 characters) and feedback (up to 5,000 characters).');
+      session.feedbackSent = (session.feedbackSent || []).filter(time => Date.now() - time < 600000);
+      if (session.feedbackSent.length >= 3) fail(429, 'You have sent several messages. Please wait 10 minutes before sending more feedback.');
+      const attempt = Date.now(); session.feedbackSent.push(attempt);
+      const item = { id: randomUUID(), title, text, createdAt: new Date().toISOString(), reviewed: false };
+      try {
+        await saveFeedback(items => {
+          if (items.length >= 1000) fail(503, 'The feedback inbox is full. Please try again later.');
+          return [item, ...items];
+        });
+      } catch (e) { session.feedbackSent.splice(session.feedbackSent.indexOf(attempt), 1); throw e; }
+      json({ ok: true }, 201); return;
+    }
     if (url.pathname === '/api/identity') {
       const bytes = base64Bytes(input.publicKey, 32);
       if (!bytes || nacl.scalarMult(new Uint8Array(32).fill(42), bytes).every(x => x === 0)) fail(400, 'Invalid public encryption key.');
@@ -253,6 +287,15 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === '/api/admin/logout') { session.adminUntil = 0; session.displayAsAdmin = false; publishAppearance(session); json(publicSession(session)); return; }
     if (url.pathname.startsWith('/api/admin/') && session.adminUntil <= Date.now()) fail(403, 'Unlock admin controls first.');
+    if (url.pathname === '/api/admin/feedback/update' || url.pathname === '/api/admin/feedback/delete') {
+      const removing = url.pathname.endsWith('/delete');
+      if (!removing && typeof input.reviewed !== 'boolean') fail(400, 'Choose a feedback status.');
+      await saveFeedback(items => {
+        if (!items.some(item => item.id === input.id)) fail(404, 'Feedback no longer exists.');
+        return removing ? items.filter(item => item.id !== input.id) : items.map(item => item.id === input.id ? { ...item, reviewed: input.reviewed } : item);
+      });
+      json({ ok: true }); return;
+    }
     if (url.pathname === '/api/admin/appearance') {
       if (typeof input.displayAsAdmin !== 'boolean') fail(400, 'Choose whether to display as admin.');
       session.displayAsAdmin = input.displayAsAdmin;

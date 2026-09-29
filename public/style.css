@@ -299,6 +299,18 @@ dialog input, #emoji-search { border: 1px solid var(--line); border-radius: 0; b
 .topbar-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
 .source-link { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 34px; height: 34px; border-radius: 7px; color: var(--muted); }
 .source-link:hover { background: var(--accent-soft); color: var(--accent); }
+#feedback-form textarea { width: 100%; min-height: 140px; padding: 12px; border: 1px solid var(--line); background: var(--side); resize: vertical; }
+#feedback-form .primary { margin-top: 16px; }
+#feedback-dialog .feedback-note, #feedback-inbox-status { font-size: 12px; }
+.feedback-inbox-heading, .feedback-actions { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+.feedback-inbox-heading h3 { margin: 0; }
+.feedback-inbox { margin-bottom: 28px; }
+.feedback-entry { border-top: 1px solid var(--line); padding: 12px 0; }
+.feedback-entry summary { cursor: pointer; overflow-wrap: anywhere; line-height: 1.6; }
+.feedback-state { display: inline-block; margin-left: 8px; padding: 2px 6px; border-radius: 5px; background: var(--accent-soft); color: var(--accent); font-size: 11px; }
+.feedback-date { display: block; margin: 12px 0; color: var(--muted); font-size: 12px; }
+.feedback-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.feedback-actions { justify-content: flex-start; }
 .faq-link { padding: 8px 10px; border-radius: 6px; background: transparent; color: var(--accent); font-size: 12px; }
 .faq-link:hover { background: var(--accent-soft); }
 .faq-dialog { --dialog-padding: 24px; width: min(680px, calc(100% - 32px)); }

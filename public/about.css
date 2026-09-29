@@ -3,6 +3,8 @@
 .about-header, .about-footer { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
 .about-header { min-height: 88px; padding: 14px 0; flex-wrap: wrap; border-bottom: 1px solid var(--line); }
 .about-header .brand, .about-header .about-cta { flex-shrink: 0; }
+.about-header-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.about-header button.about-cta { background: transparent; cursor: pointer; }
 .about-main { display: block; max-width: 820px; margin: 0 auto; padding: 72px 0 80px; }
 .about-main h1 { max-width: 700px; margin: 0 0 20px; font-size: clamp(36px, 6vw, 64px); line-height: 1.1; letter-spacing: -2px; }
 .about-main h2 { margin: 0 0 20px; font-size: clamp(23px, 3vw, 30px); line-height: 1.25; letter-spacing: -.7px; }

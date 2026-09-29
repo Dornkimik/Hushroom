@@ -30,6 +30,7 @@
   document.addEventListener('DOMContentLoaded', () => {
     const select = document.getElementById('theme-select');
     apply();
+    if (!select) return;
     select.addEventListener('change', () => {
       preference = select.value;
       try { localStorage.setItem(key, preference); } catch { /* Keep the in-memory choice. */ }
