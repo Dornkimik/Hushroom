@@ -77,6 +77,28 @@ try {
   assert.equal(await a.locator('#verification-code').textContent(),await b.locator('#verification-code').textContent());
   await a.locator('#confirm-verification').click(); await b.locator('#confirm-verification').click();
   assert.match(await a.locator('#encryption-status').textContent(),/Identity verified/);
+  // Reproduce a browser closing IndexedDB while the chat is still open.
+  const storageRecovery = await a.evaluate(async () => {
+    const nativeTransaction = IDBDatabase.prototype.transaction;
+    let closed = false;
+    IDBDatabase.prototype.transaction = function (...args) {
+      if (!closed && this.name === 'silenzachat-private-v1') { closed = true; this.close(); }
+      return nativeTransaction.apply(this, args);
+    };
+    try {
+      const before = encryptionClient.code(peerIdentity);
+      const peers = await Promise.all(Array.from({ length: 4 }, () => encryptionClient.peer(current.peer)));
+      const after = encryptionClient.code(peers[0]);
+      await encryptionClient.verify(peers[0]);
+      let rejectsChangedKey = false;
+      try {
+        await encryptionClient.encryptGroup({ id: crypto.randomUUID(), group: 'test', version: 1, sender: me.id, text: 'Must not encrypt' },
+          [{ id: peers[0].id, publicKey: SilenzaCrypto.base64(nacl.box.keyPair().publicKey) }]);
+      } catch (e) { rejectsChangedKey = e.message.includes('Encryption identity changed'); }
+      return { closed, sameIdentity: before === after, verified: peers.every(p => p.verified), rejectsChangedKey };
+    } finally { IDBDatabase.prototype.transaction = nativeTransaction; }
+  });
+  assert.deepEqual(storageRecovery, { closed: true, sameIdentity: true, verified: true, rejectsChangedKey: true });
   // Encrypt a locally generated raster image. The original filename must never leave the browser.
   const imageAudit = await auditImages(a);
   const image=await a.evaluate(()=>{const canvas=document.createElement('canvas');canvas.width=160;canvas.height=100;const ctx=canvas.getContext('2d');ctx.fillStyle='#326b50';ctx.fillRect(0,0,160,100);return canvas.toDataURL('image/png').split(',')[1];});

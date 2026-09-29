@@ -93,7 +93,11 @@
         if (!request.result.objectStoreNames.contains('identities')) request.result.createObjectStore('identities');
         if (!request.result.objectStoreNames.contains('peers')) request.result.createObjectStore('peers');
       };
-      request.onsuccess = () => resolve(request.result);
+      request.onsuccess = () => {
+        const db = request.result;
+        db.onversionchange = () => db.close();
+        resolve(db);
+      };
       request.onerror = () => reject(new Error('Private chats need browser storage for encryption keys.'));
     });
   }
@@ -134,7 +138,14 @@
   // Read/write happen in one transaction, so simultaneous tabs cannot generate different identities.
   async function transaction(db, storeName, id, transform) {
     return new Promise((resolve, reject) => {
-      const tx = db.transaction(storeName, 'readwrite'), store = tx.objectStore(storeName), request = store.get(id);
+      let tx;
+      try { tx = db.transaction(storeName, 'readwrite'); }
+      catch (e) {
+        // Only a failure to start is safe to retry; never replay an aborted write.
+        reject(Object.assign(new Error('Could not open local encryption storage.'), { cause: e, closedDatabase: e.name === 'InvalidStateError' }));
+        return;
+      }
+      const store = tx.objectStore(storeName), request = store.get(id);
       let result, failure;
       request.onsuccess = () => {
         try { result = transform(request.result); store.put(result, id); }
@@ -146,14 +157,38 @@
   }
   async function createClient(id, api) {
     if (!globalThis.isSecureContext) throw new Error('Private chats require HTTPS (or localhost).');
-    const db = await openStore();
-    const identity = await transaction(db, 'identities', id, existing => existing || nacl.box.keyPair());
+    let db = await openStore(), reopening, identity;
+    async function stored(storeName, key, transform) {
+      const connection = db;
+      try { return await transaction(connection, storeName, key, transform); }
+      catch (e) {
+        if (!e.closedDatabase) throw e;
+        if (db === connection) {
+          if (!reopening) reopening = (async () => {
+            // Reopen the same database without rerunning migration or replacing keys.
+            const replacement = await openDatabase(connection.name);
+            try {
+              if (identity) await transaction(replacement, 'identities', id, existing => {
+                if (!existing || base64(existing.publicKey) !== base64(identity.publicKey) || base64(existing.secretKey) !== base64(identity.secretKey)) {
+                  throw new Error('Your local encryption identity is missing or changed. Reload the page to reconnect safely.');
+                }
+                return existing;
+              });
+              db = replacement;
+            } catch (error) { replacement.close(); throw error; }
+          })().finally(() => { reopening = null; });
+          await reopening;
+        }
+        return transaction(db, storeName, key, transform);
+      }
+    }
+    identity = await stored('identities', id, existing => existing || nacl.box.keyPair());
     const ownKey = base64(identity.publicKey);
     await api('identity', { publicKey: ownKey });
     async function trust(remote) {
       publicKey(remote.publicKey);
       if (remote.id === id && remote.publicKey !== ownKey) throw new Error('Your encryption identity changed.');
-      return transaction(db, 'peers', `${id}:${remote.id}`, existing => {
+      return stored('peers', `${id}:${remote.id}`, existing => {
         if (existing && existing.publicKey !== remote.publicKey) throw new Error('Encryption identity changed. Private chat is blocked.');
         return existing || { id: remote.id, publicKey: remote.publicKey, verified: false };
       });
@@ -172,7 +207,7 @@
         return decryptGroupMessage(message, id, identity, person.publicKey);
       },
       code: person => verificationCode({ id, publicKey: ownKey }, person),
-      verify: async person => transaction(db, 'peers', `${id}:${person.id}`, existing => {
+      verify: async person => stored('peers', `${id}:${person.id}`, existing => {
         if (!existing || existing.publicKey !== person.publicKey) throw new Error('Encryption identity changed.');
         return { ...existing, verified: true };
       })
