@@ -100,7 +100,7 @@ Run **one server process / one replica**. Sessions and message histories are hel
 
 ### Search visibility
 
-The homepage and `/about/` have descriptive titles, canonical URLs, and a sitemap at `/sitemap.xml`. The canonical URLs and sitemap currently use `https://silenzachat.cc`; update them if you deploy under another public domain. After deployment, add the site to Google Search Console, submit the sitemap, and inspect both URLs to check whether Google can index them. Search appearance and ranking depend on Google's crawl and evaluation, so these changes do not guarantee traffic.
+The homepage explains how SilenzaChat works; visitors enter the live chat at `/chat/` by choosing Connect. Both pages have descriptive titles, canonical URLs, and a sitemap at `/sitemap.xml`. The canonical URLs and sitemap currently use `https://silenzachat.cc`; update them if you deploy under another public domain. After deployment, add the site to Google Search Console, submit the sitemap, and inspect both URLs to check whether Google can index them. Search appearance and ranking depend on Google's crawl and evaluation, so these changes do not guarantee traffic.
 
 ### Verify
 

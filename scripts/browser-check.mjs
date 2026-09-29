@@ -39,7 +39,13 @@ try {
   });
   const sent=[];
   for(const page of [a,b,c]) { page.on('pageerror',e=>errors.push(e.message)); page.on('request',r=>{if(r.url().endsWith('/api/message') && r.method()==='POST') sent.push(r.postDataJSON());}); }
-  await Promise.all([a.goto(origin),b.goto(origin),c.goto(origin)]);
+  const landing = await browser.newPage();
+  await landing.goto(origin);
+  assert.match(await landing.locator('h1').textContent(), /Anonymous chat with no registration/);
+  await landing.getByRole('link', { name: 'Connect to chat' }).first().click();
+  await landing.waitForURL(`${origin}/chat/`);
+  await landing.close();
+  await Promise.all([a.goto(`${origin}/chat/`),b.goto(`${origin}/chat/`),c.goto(`${origin}/chat/`)]);
   assert.equal(await a.locator('html').getAttribute('data-theme'), 'light');
   assert.equal(await a.evaluate(() => localStorage.getItem('silenzachat-theme')), 'light');
   assert.equal(await a.evaluate(() => localStorage.getItem('silenzachat-legacy-theme')), null);
@@ -64,7 +70,7 @@ try {
   assert.equal(sent[0].text,undefined); assert.ok(sent[0].encrypted); assert.ok(!JSON.stringify(sent[0]).includes('private sentinel caption'));
   // Reload and another tab reuse the local identity.
   await b.reload(); await b.locator('#dms .dm-room').filter({hasText:aliasA}).click(); await b.getByText('private sentinel caption',{exact:true}).waitFor();
-  const tab=await ac.newPage(); await tab.goto(origin); await tab.locator('#dms .dm-room').filter({hasText:aliasB}).click(); await tab.getByText('private sentinel caption',{exact:true}).waitFor(); await tab.close();
+  const tab=await ac.newPage(); await tab.goto(`${origin}/chat/`); await tab.locator('#dms .dm-room').filter({hasText:aliasB}).click(); await tab.getByText('private sentinel caption',{exact:true}).waitFor(); await tab.close();
   await a.locator('#verify-identity').click(); await b.locator('#verify-identity').click();
   await a.locator('#verify-dialog').waitFor({state:'visible'}); await b.locator('#verify-dialog').waitFor({state:'visible'});
   assert.equal(await a.locator('#verification-code').textContent(),await b.locator('#verification-code').textContent());
@@ -113,7 +119,7 @@ try {
   // Offline recipients can decrypt later without either browser uploading a private key.
   await b.close(); await a.locator('#message').fill('delivered while offline'); await a.locator('.send-button').click();
   await a.getByText('delivered while offline', {exact:true}).waitFor();
-  const returned=await bc.newPage(); returned.on('pageerror',e=>errors.push(e.message)); await returned.goto(origin);
+  const returned=await bc.newPage(); returned.on('pageerror',e=>errors.push(e.message)); await returned.goto(`${origin}/chat/`);
   await returned.locator('#dms .dm-room').filter({hasText:aliasA}).click(); await returned.getByText('delivered while offline',{exact:true}).waitFor();
   assert.match(await returned.locator('#encryption-status').textContent(), /Identity verified/);
   // Only authenticated admins can opt into the visible identity, shared across tabs.
@@ -136,7 +142,7 @@ try {
   await earlierOwnName.locator('.admin-badge').waitFor();
   assert.equal(await earlierOwnName.evaluate(el => getComputedStyle(el).color), 'rgb(239, 143, 150)');
   await c.reload(); await earlierName.locator('.admin-badge').waitFor();
-  const adminTab = await ac.newPage(); await adminTab.goto(origin);
+  const adminTab = await ac.newPage(); await adminTab.goto(`${origin}/chat/`);
   await adminTab.waitForFunction(()=>document.querySelector('#display-as-admin').checked);
   await a.locator('#admin-dialog .close-dialog').click();
   await a.locator('#message').fill('visible admin private message'); await a.locator('.send-button').click();
