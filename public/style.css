@@ -117,12 +117,14 @@ textarea::placeholder { color: var(--muted); }
 .room-note p { margin: 8px 0; color: var(--muted); font-size: 12px; line-height: 1.8; }
 .room-note .privacy-copy { border-top: 1px solid var(--line); padding-top: 16px; margin-top: 20px; }
 .room-note button { padding: 4px 0; background: transparent; color: var(--accent); font-size: 12px; }
-dialog { width: min(480px, calc(100% - 32px)); max-height: 85dvh; padding: 28px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg); color: var(--text); box-shadow: 0 24px 80px #0003; }
+dialog { --dialog-padding: 28px; width: min(480px, calc(100% - 32px)); max-height: 85dvh; padding: var(--dialog-padding); border: 1px solid var(--line); border-radius: 12px; background: var(--bg); color: var(--text); box-shadow: 0 24px 80px #0003; }
 dialog::backdrop { background: #10181380; }
-.dialog-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.dialog-heading { position: sticky; top: calc(-1 * var(--dialog-padding)); z-index: 2; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin: calc(-1 * var(--dialog-padding)) calc(-1 * var(--dialog-padding)) 20px; padding: 16px var(--dialog-padding); border-bottom: 1px solid var(--line); background: var(--bg); }
+.dialog-heading > :first-child { min-width: 0; overflow-wrap: anywhere; }
+.dialog-heading h2 { margin: 8px 0; }
 dialog h2 { font-size: 22px; font-weight: 550; letter-spacing: -.5px; }
 .eyebrow { color: var(--muted); font-size: 10px; letter-spacing: 1px; }
-.close-dialog { padding: 5px; background: transparent; color: var(--muted); font-size: 26px; }
+.close-dialog { flex-shrink: 0; width: 44px; height: 44px; padding: 5px; background: transparent; color: var(--muted); font-size: 26px; }
 dialog p { color: var(--muted); font-size: 14px; line-height: 1.8; }
 dialog label { display: block; margin: 18px 0 8px; }
 dialog label span { color: var(--muted); }
@@ -296,7 +298,7 @@ dialog input, #emoji-search { border: 1px solid var(--line); border-radius: 0; b
 .topbar-actions { display: flex; align-items: center; gap: 12px; }
 .faq-link { padding: 8px 10px; border-radius: 6px; background: transparent; color: var(--accent); font-size: 12px; }
 .faq-link:hover { background: var(--accent-soft); }
-.faq-dialog { width: min(680px, calc(100% - 32px)); padding: 24px; }
+.faq-dialog { --dialog-padding: 24px; width: min(680px, calc(100% - 32px)); }
 .faq-dialog h2 { margin: 8px 0; font-size: clamp(20px, 4vw, 26px); }
 .faq-dialog .close-dialog { flex-shrink: 0; }
 .faq-section { margin-top: 28px; }
@@ -309,7 +311,7 @@ dialog input, #emoji-search { border: 1px solid var(--line); border-radius: 0; b
 .faq-section details p { margin: 0 0 16px; }
 @media (max-width: 600px) {
   .topbar-actions { gap: 4px; }
-  .faq-dialog { padding: 20px; }
+  .faq-dialog { --dialog-padding: 20px; }
 }
 
 :root {
