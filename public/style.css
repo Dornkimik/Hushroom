@@ -423,7 +423,24 @@ dialog input, #emoji-search { border-radius: 7px; background: var(--side); }
 .group-member-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 #group-error { color: var(--danger); font-size: 13px; }
 #group-details { margin-left: auto; }
-#room-rules { margin: 0; padding: 12px 32px; border-bottom: 1px solid var(--line); color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 120px; overflow: auto; }
+#room-rules { flex-shrink: 0; margin: 0; padding: 12px 32px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+#room-rules summary { width: fit-content; cursor: pointer; color: var(--text); }
+#room-rules summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+#room-rules p { margin: 10px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 100px; overflow: auto; line-height: 1.6; }
+.group-chat .room-heading { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; flex-shrink: 0; padding-top: 20px; padding-bottom: 20px; }
+.group-chat .room-heading .eyebrow { display: block; margin-bottom: 6px; color: var(--muted); font-size: 11px; letter-spacing: 0; }
+.group-chat .room-heading h1 { margin-bottom: 4px; }
+.group-chat .room-heading p { line-height: 1.6; }
+.group-chat .room-badge { display: none; }
+.group-chat #group-details { margin: 0; padding: 9px 12px; border: 1px solid var(--line); background: var(--side); white-space: nowrap; }
+.group-chat .empty-chat { margin: 24px 0; padding: 16px; border: 1px dashed var(--line); border-radius: 8px; text-align: left; line-height: 1.6; }
+.group-chat .topbar, .group-chat .composer-wrap { flex-shrink: 0; }
+@media (max-width: 1250px) {
+  .group-chat .room-heading { grid-template-columns: 38px minmax(0, 1fr); }
+  .group-chat #group-details { grid-column: 2; justify-self: start; white-space: normal; }
+  .group-chat .topbar { flex-wrap: wrap; gap: 8px; }
+  .group-chat .topbar-actions { flex-wrap: wrap; }
+}
 @media (max-width: 600px) {
   .sidebar .group-label { display: flex; margin: 8px 0; }
   #groups { display: flex; flex-wrap: wrap; gap: 4px; }

@@ -52,17 +52,19 @@ function renderDMs() {
 }
 function updateHeading() {
   const privateChat = Boolean(current?.peer), groupChat = Boolean(current?.group), room = groupChat ? groupState || groupRooms.find(g => g.id === current.group) : rooms.find(r => r.id === current?.room);
+  $('.app').classList.toggle('group-chat', groupChat);
   $('#room-title').textContent = privateChat ? conversations.get(current.peer) || 'Private conversation' : room?.name || 'A little quiet for now';
-  $('#room-description').textContent = privateChat ? 'A conversation just between the two of you.' : room?.description || 'Choose a room or someone to talk to.';
+  $('#room-description').textContent = privateChat ? 'A conversation just between the two of you.' : room?.description || (groupChat ? '' : 'Choose a room or someone to talk to.');
+  $('#room-description').hidden = groupChat && !room?.description;
   $('#room-symbol').textContent = privateChat ? '↗' : '#';
-  $('#conversation-type').textContent = privateChat ? 'JUST BETWEEN YOU TWO' : 'COME AS YOU ARE';
+  $('#conversation-type').textContent = groupChat ? `Temporary room · ${room?.access === 'invite' ? 'Invite only' : 'Open'}${room?.count ? ` · ${room.count} ${room.count === 1 ? 'member' : 'members'}` : ''}` : privateChat ? 'JUST BETWEEN YOU TWO' : 'COME AS YOU ARE';
   $('#room-badge').textContent = groupChat ? 'ENCRYPTED ROOM' : privateChat ? 'PRIVATE CHAT' : 'OPEN ROOM';
   $('#private-note').hidden = !privateChat && !groupChat;
   $('#group-details').hidden = !groupChat;
   $('#group-details').disabled = !groupState;
   $('#room-rules').hidden = !groupChat || !room?.rules;
-  $('#room-rules').textContent = groupChat && room?.rules ? `Rules: ${room.rules}` : '';
-  $('#message').placeholder = privateChat ? 'Say something, just to them…' : 'Leave a little thought…';
+  $('#room-rules p').textContent = groupChat && room?.rules ? room.rules : '';
+  $('#message').placeholder = groupChat ? 'Message this room…' : privateChat ? 'Say something, just to them…' : 'Leave a little thought…';
   updateComposerState();
   $('#welcome h2').textContent = privateChat ? 'A little more personal.' : 'Make yourself at home.';
   $('#welcome p').textContent = privateChat ? 'One conversation. Just the two of you.\nA simple hello is a good place to start.' : 'Join a public room without an account or email. Choose someone online for an encrypted private chat.';
@@ -77,6 +79,7 @@ async function select(target) {
   }
   clearImageURLs(); peerIdentity = null; groupState = null;
   current = target; const version = ++revision; messages = []; error();
+  $('#room-rules').open = false;
   if (target?.peer) unread.delete(target.peer);
   renderRooms(); renderDMs(); updateHeading(); renderMessages();
   if (!target) return;
@@ -137,7 +140,9 @@ function renderMessages() {
     row.append(avatar(message.alias, own), content); return row;
   }));
   $('#empty-chat').hidden = messages.length > 0 || !current;
-  $('#welcome').hidden = messages.length > 3;
+  $('#empty-chat').textContent = current?.group ? 'No messages yet. Start the conversation below.' : 'It’s quiet in here. Be the first to say hello.';
+  $('#welcome').hidden = Boolean(current?.group) || messages.length > 3;
+  $('.day-divider').hidden = Boolean(current?.group) && messages.length === 0;
   $('#chat-scroll').scrollTop = $('#chat-scroll').scrollHeight;
 }
 function applyRemoval(removed) {
