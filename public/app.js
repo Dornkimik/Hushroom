@@ -1,5 +1,6 @@
 const $ = selector => document.querySelector(selector);
 let me, rooms = [], people = [], adminBans = [], current, messages = [], stream, revision = 0, deleting, banning;
+let editingMessage, editSaving = false;
 let replying, sending = false, suggestions = [], suggestionIndex = 0, completionStart = 0;
 let encryptionClient, encryptionError = '', peerIdentity, pendingImage, imagePreparing = false, imageRevision = 0, verificationTarget;
 const imageURLs = new Map(), imageLoads = new Map();
@@ -71,6 +72,7 @@ function updateHeading() {
 }
 function matches(message, target = current) { return target && (target.group ? message.group === target.group : message.group ? false : target.peer ? !message.room && ((message.sender === me.id && message.recipient === target.peer) || (message.sender === target.peer && message.recipient === me.id)) : message.room === target.room); }
 async function select(target) {
+  $('#edit-message-dialog').close(); editingMessage = null;
   setReply(null); closeSuggestions(); toggleEmoji(false);
   if (conversationKey(target) !== conversationKey(current)) {
     if (current) drafts.set(conversationKey(current), $('#message').value);
@@ -116,6 +118,19 @@ function renderMessages() {
     const replyButton = element('button', 'message-reply', 'Reply');
     replyButton.type = 'button'; replyButton.disabled = Boolean(message.locked); replyButton.onclick = () => { setReply(message); $('#message').focus(); };
     meta.append(replyButton);
+    if (message.editedAt) meta.append(element('span', 'message-time', '(edited)'));
+    if (own && !message.locked) {
+      const edit = element('button', 'message-reply', 'Edit'); edit.type = 'button';
+      edit.onclick = () => {
+        if (editSaving) return;
+        editingMessage = { ...message };
+        $('#edit-message-text').value = message.text;
+        $('#edit-message-text').required = !message.image;
+        $('#edit-message-error').textContent = '';
+        $('#edit-message-dialog').showModal(); $('#edit-message-text').focus();
+      };
+      meta.append(edit);
+    }
     if (own || (message.group ? groupState?.owner === me.id : me?.admin)) {
       const remove = element('button', 'message-remove', own ? 'Delete' : 'Remove');
       remove.type = 'button'; remove.title = 'Remove this message for everyone';
@@ -148,6 +163,7 @@ function renderMessages() {
 function applyRemoval(removed) {
   if (!matches(removed)) return;
   const { id } = removed;
+  if (editingMessage?.id === id) { $('#edit-message-dialog').close(); editingMessage = null; }
   revokeImage(id); messages = messages.filter(message => message.id !== id);
   for (const message of messages) if (message.reply?.id === id) message.reply = { id, removed: true };
   if (replying?.id === id) setReply(null);
@@ -166,11 +182,54 @@ async function receive(message) {
     if (message.encrypted) {
       const decoded = await decodePrivate(message);
       if (version !== revision) return;
-      messages = messages.map(m => m.id === message.id ? { ...decoded, reply: m.reply } : m); renderMessages();
+      messages = messages.map(m => m.id === message.id && (m.editVersion || 0) === (message.editVersion || 0) ? { ...decoded, reply: m.reply } : m); renderMessages();
     }
     for (const id of new Set([...imageURLs.keys(), ...imageLoads.keys()])) if (!messages.some(m => m.id === id)) revokeImage(id);
   }
 }
+async function applyEdit(message) {
+  if (!matches(message)) return;
+  const existing = messages.find(m => m.id === message.id);
+  if (!existing || (existing.editVersion || 0) >= message.editVersion) return;
+  const version = revision;
+  // Reserve the version before decrypting so a slower event cannot overwrite a newer edit.
+  messages = messages.map(m => m.id === message.id ? { ...message, text: 'Decrypting…', locked: true, reply: m.reply } : m);
+  const decoded = await decodePrivate(message);
+  if (version !== revision) return;
+  messages = messages.map(m => m.id === message.id && m.editVersion === message.editVersion ? { ...decoded, reply: m.reply } : m);
+  const latest = messages.find(m => m.id === message.id);
+  if (!latest || latest.editVersion !== message.editVersion) return;
+  if (message.room) for (const reply of messages) if (reply.reply?.id === message.id) reply.reply.text = message.text.slice(0, 200);
+  if (replying?.id === message.id) setReply(latest);
+  const scroll = $('#chat-scroll'), top = scroll.scrollTop, atBottom = scroll.scrollHeight - top - scroll.clientHeight < 60;
+  renderMessages(); if (!atBottom) scroll.scrollTop = top;
+}
+$('#cancel-edit-message').onclick = () => $('#edit-message-dialog').close();
+$('#edit-message-form').onsubmit = async event => {
+  event.preventDefault(); if (!editingMessage || editSaving) return;
+  const message = editingMessage, text = $('#edit-message-text').value.trim();
+  const button = event.currentTarget.querySelector('button[type="submit"]');
+  editSaving = true; button.disabled = true; $('#edit-message-error').textContent = '';
+  try {
+    if ((!text && !message.image) || text.length > 2000) throw new Error('Use between 1 and 2,000 characters, or keep an attached image.');
+    const editVersion = (message.editVersion || 0) + 1;
+    let result;
+    if (message.group) {
+      const state = await api(`groups/message-edit-state?${new URLSearchParams({ group: message.group, id: message.id })}`);
+      const envelopes = await encryptionClient.encryptGroup({ id: message.id, group: message.group, version: message.version, sender: me.id, text,
+        replyTo: message.reply?.id || null, image: message.image || null, editVersion }, state.members);
+      result = await api('groups/message-edit', { group: message.group, id: message.id, membershipVersion: state.membershipVersion, editVersion, envelopes });
+    } else if (message.encrypted) {
+      const person = await encryptionClient.peer(message.recipient);
+      const encrypted = encryptionClient.encrypt({ id: message.id, sender: me.id, recipient: message.recipient, text,
+        replyTo: message.reply?.id || null, image: message.image || null, editVersion }, person);
+      result = await api('message/edit', { id: message.id, editVersion, encrypted });
+    } else result = await api('message/edit', { id: message.id, editVersion, text });
+    await applyEdit(result);
+    if (editingMessage === message) { $('#edit-message-dialog').close(); editingMessage = null; }
+  } catch(e) { if (editingMessage === message) $('#edit-message-error').textContent = e.message; }
+  finally { editSaving = false; button.disabled = false; }
+};
 function updateComposerState(problem) {
   const privateChat = Boolean(current?.peer), ready = Boolean(encryptionClient && peerIdentity?.id === current?.peer);
   const groupChat = Boolean(current?.group), groupReady = Boolean(encryptionClient && groupState?.id === current?.group && groupState?.joined);
@@ -554,6 +613,7 @@ async function start() {
     stream.addEventListener('people', event => { people = JSON.parse(event.data); for (const person of people) updateAppearance(person); renderPeople(); renderDMs(); renderAdminPeople(); });
     stream.addEventListener('rooms', event => { rooms = JSON.parse(event.data); if (current?.room && !rooms.some(r => r.id === current.room)) { select(rooms[0] ? { room: rooms[0].id } : null); error('That room was removed by the host.'); } else if (!current && rooms[0]) select({ room: rooms[0].id }); else { renderRooms(); updateHeading(); } });
     stream.addEventListener('message', event => receive(JSON.parse(event.data)));
+    stream.addEventListener('message-edited', event => applyEdit(JSON.parse(event.data)));
     stream.addEventListener('message-removed', event => applyRemoval(JSON.parse(event.data)));
     stream.addEventListener('moderation', () => { if (me.admin) refreshAdminState(); });
     setInterval(() => {

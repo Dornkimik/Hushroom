@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node --env-file-if-exists=.env server.mjs",
     "test": "node --test",
+    "test:editing:browser": "node scripts/editing-browser-check.mjs",
     "test:browser": "node scripts/browser-check.mjs",
     "test:groups:browser": "node scripts/group-browser-check.mjs",
     "test:feedback:browser": "node scripts/feedback-browser-check.mjs"

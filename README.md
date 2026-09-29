@@ -119,3 +119,9 @@ Run `npm test` for crypto, storage, and integration tests covering authenticatio
 Run `npm run test:groups:browser` for the temporary-room browser flow, including open and invite-only access, encryption, replies, identity checks, participation counts, ownership transfer, kicks, reloads, and desktop/mobile layout. These browser checks require Playwright Chromium, just like `npm run test:browser`.
 
 For browser tests, install dependencies with `npm ci`, install Chromium with `npx playwright install chromium`, and run `npm run test:browser`. You can use an existing browser by setting `CHROMIUM_PATH` (for example, `CHROMIUM_PATH=/usr/bin/chromium npm run test:browser`). Browser checks use temporary data and isolated profiles; they do not use your normal browser profile or a running chat instance.
+
+### Editing messages
+
+Choose **Edit** on your own message to change its text or image caption, then **Save changes**. Cancel keeps the original message and your unsent draft. Edited messages show an **(edited)** label and update for other participants, including reply previews. Attached images stay unchanged. Only the sender can edit; admin and room-owner roles do not grant permission to edit other people’s messages.
+
+Private and temporary-room edits remain end-to-end encrypted. An older room message is updated only for original recipients who still have access; later members cannot see it. Deleted or expired messages cannot be edited. Concurrent edits are rejected so you can reopen the latest version. Sending and editing share the existing rate limit. Run `npm run test:editing:browser` for browser coverage.

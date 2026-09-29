@@ -180,7 +180,7 @@ test('admin room moderation preserves encryption boundaries and cleans up delete
   const { store, attachments, users: [owner, admin], call, send, events, advance } = setup();
   const room = call(owner, 'create', { name: 'Private room', access: 'invite' });
   assert.throws(() => store.moderate('list', admin), /Unlock/);
-  admin.adminUntil = Date.now() + 10000;
+  admin.adminUntil = store.now() + 10000;
   const message = call(owner, 'message', send(owner, room.id));
   const upload = await attachments.upload(Readable.from([new Uint8Array(32)]), owner.id, null, { group: room.id, version: room.version });
   assert.equal(store.moderate('list', admin)[0].id, room.id);
@@ -202,4 +202,42 @@ test('admin room moderation preserves encryption boundaries and cleans up delete
   assert.equal(store.bytes, 0); assert.equal(attachments.items.has(upload.id), false);
   assert.ok(events.some(e => e.user === owner.id && e.event === 'group-removed'));
   assert.throws(() => store.get(room.id), /expired or was deleted/);
+});
+
+
+test('editing group messages preserves original audience, ownership, replies, counts and byte accounting', () => {
+  const { store, users: [a,b,c], events, call, send, advance } = setup();
+  const room = call(a, 'create', { name: 'Edit room' }), group = room.id;
+  call(b, 'join', { group });
+  const message = call(a, 'message', send(a, group, 'Before'));
+  const edit = (text, editVersion = 1) => {
+    const state = call(a, 'message-edit-state', { group, id: message.id }, 'GET');
+    return { group, id: message.id, membershipVersion: state.membershipVersion, editVersion,
+      envelopes: crypto.encryptGroupMessage({ id: message.id, group, version: message.version, sender: a.id, text, editVersion }, a.identity, state.members) };
+  };
+  assert.throws(() => call(b, 'message-edit-state', { group, id: message.id }, 'GET'), /Your message/);
+  assert.throws(() => call(b, 'message-edit', edit('Stolen')), /Your message/);
+  const stale = edit('Before join'); call(c, 'join', { group });
+  assert.throws(() => call(a, 'message-edit', stale), /Membership changed/);
+  const valid = edit('After edit');
+  assert.deepEqual(Object.keys(valid.envelopes).sort(), [a.id,b.id].sort());
+  assert.throws(() => call(a, 'message-edit', { ...valid, text: 'plaintext' }), /ciphertext/);
+  assert.throws(() => call(a, 'message-edit', { ...valid, envelopes: { ...valid.envelopes, [c.id]: valid.envelopes[a.id] } }), /original recipients/);
+  const updated = call(a, 'message-edit', valid);
+  assert.equal(updated.time, message.time); assert.equal(updated.editVersion, 1); assert.ok(updated.editedAt);
+  assert.equal(crypto.decryptGroupMessage(updated, a.id, a.identity, a.publicKey).text, 'After edit');
+  assert.throws(() => crypto.decryptGroupMessage({ ...updated, editVersion: 0 }, a.id, a.identity, a.publicKey), /metadata/);
+  assert.deepEqual(call(c, 'history', { group }, 'GET'), []);
+  assert.ok(!events.some(e => e.user === c.id && e.event === 'message-edited'));
+  assert.ok(events.some(e => e.user === b.id && e.event === 'message-edited'));
+  assert.equal(call(a, 'state', { group }, 'GET').members.find(m => m.id === a.id).messages, 1);
+  assert.throws(() => call(a, 'message-edit', valid), /message changed/);
+  call(a, 'kick', { group, member: b.id });
+  const afterKick = edit('After kick', 2); assert.deepEqual(Object.keys(afterKick.envelopes), [a.id]);
+  call(a, 'message-edit', afterKick);
+  assert.equal(store.bytes, store.get(group).bytes);
+  assert.equal(store.bytes, store.get(group).history.reduce((sum,m) => sum + m.bytes, 0));
+  call(a, 'message-delete', { group, id: message.id }); assert.equal(store.bytes, 0);
+  assert.throws(() => call(a, 'message-edit', afterKick), /Your message/);
+  advance(10001);
 });

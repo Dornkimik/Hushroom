@@ -46,6 +46,21 @@ const publicSession = s => ({ ...safeUser(s), admin: s.adminUntil > Date.now() }
 const publishAppearance = s => { emit(s, 'session', publicSession(s)); broadcast('appearance', safeUser(s)); presence(); };
 const groups = new Groups({ emit, broadcast, safeUser, attachments, findUser: id => [...sessions.values()].find(s => s.id === id) });
 const keyFor = (s, room, peer) => peer ? `dm:${[s.id, peer].sort().join(':')}` : `room:${room}`;
+function publicMentions(text) {
+  const mentions = [];
+  const candidates = [...sessions.values()];
+  for (const person of candidates) {
+    const tag = `@${person.alias}`;
+    let start = text.indexOf(tag);
+    while (start !== -1) {
+      const end = start + tag.length;
+      if ((start === 0 || /\s/.test(text[start - 1])) && (end === text.length || /[\s.,!?;:()]/.test(text[end]))) mentions.push({ id: person.id, alias: person.alias, start, end });
+      start = text.indexOf(tag, end);
+    }
+  }
+  mentions.sort((a, b) => a.start - b.start);
+  return mentions;
+}
 let saveQueue = Promise.resolve();
 function saveBans() {
   const job = saveQueue.then(async () => {
@@ -123,7 +138,7 @@ const server = http.createServer(async (req, res) => {
     session.seen = Date.now();
     if (url.pathname === '/api/groups' || url.pathname.startsWith('/api/groups/')) {
       const action = url.pathname.slice('/api/groups'.length).replace(/^\//, '');
-      const input = req.method === 'POST' ? await body(req, action === 'message' ? 512000 : 32768) : Object.fromEntries(url.searchParams);
+      const input = req.method === 'POST' ? await body(req, ['message', 'message-edit'].includes(action) ? 512000 : 32768) : Object.fromEntries(url.searchParams);
       // Recheck after reading the request, since a ban may occur during a slow upload.
       if (sessions.get(token) !== session) fail(403, 'This session is no longer available.');
       json(groups.handle(req.method, action, session, input)); return;
@@ -217,6 +232,36 @@ const server = http.createServer(async (req, res) => {
       if (!rooms.some(r => r.id === input.room)) fail(404, 'Room no longer exists.');
       session.room = input.room; publishRooms(); json({ ok: true }); return;
     }
+    if (url.pathname === '/api/message/edit') {
+      if (sessions.get(token) !== session) fail(403, 'This session is no longer available.');
+      let message, history;
+      for (const items of histories.values()) {
+        const found = items.find(m => m.id === input.id && m.sender === session.id);
+        if (found) { message = found; history = items; break; }
+      }
+      if (!message) fail(404, 'Your message is no longer available to edit.');
+      if (input.editVersion !== (message.editVersion || 0) + 1) fail(409, 'This message changed. Reopen the editor and try again.');
+      session.sent = session.sent.filter(t => Date.now() - t < 10000);
+      if (session.sent.length >= 8) fail(429, 'Take a breath. Try again in a few seconds.');
+      if (message.encrypted) {
+        if (Object.keys(input).some(k => !['id', 'editVersion', 'encrypted'].includes(k))) fail(400, 'Private edits must contain ciphertext only.');
+        const box = input.encrypted;
+        if (!box || box.v !== 1 || Object.keys(box).some(k => !['v', 'nonce', 'ciphertext'].includes(k)) ||
+            !base64Bytes(box.nonce, 24) || !base64Bytes(box.ciphertext, null, 18000)) fail(400, 'Invalid encrypted private message.');
+        message.encrypted = box;
+      } else {
+        if (Object.keys(input).some(k => !['id', 'editVersion', 'text'].includes(k))) fail(400, 'Invalid message edit.');
+        const text = typeof input.text === 'string' ? input.text.trim() : '';
+        if (!text || text.length > 2000) fail(400, 'Use between 1 and 2,000 characters.');
+        message.text = text; message.mentions = publicMentions(text);
+        for (const reply of history) if (reply.reply?.id === message.id) reply.reply.text = text.slice(0, 200);
+      }
+      message.editVersion = input.editVersion; message.editedAt = new Date().toISOString();
+      message.displayAsAdmin = displaysAsAdmin(session); session.sent.push(Date.now());
+      if (message.room) broadcast('message-edited', message);
+      else for (const person of sessions.values()) if ([message.sender, message.recipient].includes(person.id)) emit(person, 'message-edited', message);
+      json(message); return;
+    }
     if (url.pathname === '/api/message') {
       session.sent = session.sent.filter(t => Date.now() - t < 10000);
       if (session.sent.length >= 8) fail(429, 'Take a breath. Try again in a few seconds.');
@@ -254,18 +299,7 @@ const server = http.createServer(async (req, res) => {
       const key = keyFor(session, input.room, peer?.id);
       const original = input.replyTo == null ? null : (histories.get(key) || []).find(m => m.id === input.replyTo);
       if (input.replyTo != null && !original) fail(400, 'That reply is no longer available in this conversation.');
-      const mentions = [];
-      const candidates = [...sessions.values()].filter(s => !peer || s.id === session.id || s.id === peer.id);
-      for (const person of candidates) {
-        const tag = `@${person.alias}`;
-        let start = text.indexOf(tag);
-        while (start !== -1) {
-          const end = start + tag.length;
-          if ((start === 0 || /\s/.test(text[start - 1])) && (end === text.length || /[\s.,!?;:()]/.test(text[end]))) mentions.push({ id: person.id, alias: person.alias, start, end });
-          start = text.indexOf(tag, end);
-        }
-      }
-      mentions.sort((a, b) => a.start - b.start);
+      const mentions = publicMentions(text);
       session.sent.push(Date.now());
       const message = { id: randomUUID(), sender: session.id, alias: session.alias, displayAsAdmin: displaysAsAdmin(session), text, time: new Date().toISOString(), room: peer ? null : input.room, recipient: peer?.id || null, mentions,
         reply: original ? { id: original.id, alias: original.alias, text: original.text.slice(0, 200) } : null };
