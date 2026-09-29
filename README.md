@@ -1,6 +1,6 @@
 # SilenzaChat
 
-An anonymous chatroom for live public conversations and private, end-to-end encrypted chats. Visitors do not need an account, email address, or real name.
+An anonymous chatroom for live public conversations and private, end-to-end encrypted chats. Visitors do not need an account, email address, or real name. https://silenzachat.cc
 
 ## Visitor guide
 
@@ -97,6 +97,10 @@ Deploy the full project to a host that can run a long-lived Node.js process; sta
 Put HTTPS in front of the server and keep the `data` directory on persistent storage. Configure the proxy to allow streaming responses on `/api/events`, with buffering disabled and a timeout longer than the 20-second heartbeat. Install production dependencies with `npm ci --omit=dev`, then start with `npm start`. HTTPS (or localhost) and IndexedDB are required for private chats. Configure the reverse proxy to accept encrypted uploads up to 4 MB plus 16 bytes. Set `ATTACHMENT_TTL_SECONDS` to 1–86400 to shorten image retention; the default is 86400.
 
 Run **one server process / one replica**. Sessions and message histories are held in that process; multiple replicas need a shared identity store and message broker. The app includes message limits, admin login throttling, origin checks, escaped text rendering, and security headers. Larger public communities also need host-level abuse protection, moderation/reporting controls, and appropriate load testing.
+
+### Search visibility
+
+The homepage explains how SilenzaChat works; visitors enter the live chat at `/chat/` by choosing Connect. Both pages have descriptive titles, canonical URLs, and a sitemap at `/sitemap.xml`. The canonical URLs and sitemap currently use `https://silenzachat.cc`; update them if you deploy under another public domain. After deployment, add the site to Google Search Console, submit the sitemap, and inspect both URLs to check whether Google can index them. Search appearance and ranking depend on Google's crawl and evaluation, so these changes do not guarantee traffic.
 
 ### Verify
 

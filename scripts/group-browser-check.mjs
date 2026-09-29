@@ -32,7 +32,7 @@ try {
     page.on('pageerror', e => errors.push(e.message)); page.on('dialog', dialog => dialog.accept());
     page.on('request', request => { if (request.url().endsWith('/api/groups/message') && request.method() === 'POST') sent.push(request.postDataJSON()); });
   }
-  await Promise.all([a,b,c].map(page => page.goto(origin)));
+  await Promise.all([a,b,c].map(page => page.goto(`${origin}/chat/`)));
   for (const page of [a,b,c]) await page.waitForFunction(() => document.querySelector('#connection').textContent === 'Connected');
   const [ua, ub, uc] = await Promise.all([a,b,c].map(async page => (await api(page, 'session')).data.me));
   await a.locator('#create-group').click(); await a.locator('#group-name').fill('Evening circle');

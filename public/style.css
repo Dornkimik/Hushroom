@@ -61,7 +61,7 @@ button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible
 .identity small { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; }
 .avatar { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 32px; height: 32px; border-radius: 50%; background: var(--panel); color: var(--muted); font-size: 11px; font-weight: 600; }
 .me-avatar { background: var(--accent-soft); color: var(--accent); }
-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.app > main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 64px; padding: 12px 32px; border-bottom: 1px solid var(--line); }
 .connection { color: var(--muted); font-size: 12px; white-space: nowrap; }
 .connection.live::before { content: ''; display: inline-block; width: 6px; height: 6px; margin-right: 7px; border-radius: 50%; background: var(--accent); }
@@ -117,12 +117,14 @@ textarea::placeholder { color: var(--muted); }
 .room-note p { margin: 8px 0; color: var(--muted); font-size: 12px; line-height: 1.8; }
 .room-note .privacy-copy { border-top: 1px solid var(--line); padding-top: 16px; margin-top: 20px; }
 .room-note button { padding: 4px 0; background: transparent; color: var(--accent); font-size: 12px; }
-dialog { width: min(480px, calc(100% - 32px)); max-height: 85dvh; padding: 28px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg); color: var(--text); box-shadow: 0 24px 80px #0003; }
+dialog { --dialog-padding: 28px; width: min(480px, calc(100% - 32px)); max-height: 85dvh; padding: var(--dialog-padding); border: 1px solid var(--line); border-radius: 12px; background: var(--bg); color: var(--text); box-shadow: 0 24px 80px #0003; }
 dialog::backdrop { background: #10181380; }
-.dialog-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.dialog-heading { position: sticky; top: calc(-1 * var(--dialog-padding)); z-index: 2; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin: calc(-1 * var(--dialog-padding)) calc(-1 * var(--dialog-padding)) 20px; padding: 16px var(--dialog-padding); border-bottom: 1px solid var(--line); background: var(--bg); }
+.dialog-heading > :first-child { min-width: 0; overflow-wrap: anywhere; }
+.dialog-heading h2 { margin: 8px 0; }
 dialog h2 { font-size: 22px; font-weight: 550; letter-spacing: -.5px; }
 .eyebrow { color: var(--muted); font-size: 10px; letter-spacing: 1px; }
-.close-dialog { padding: 5px; background: transparent; color: var(--muted); font-size: 26px; }
+.close-dialog { flex-shrink: 0; width: 44px; height: 44px; padding: 5px; background: transparent; color: var(--muted); font-size: 26px; }
 dialog p { color: var(--muted); font-size: 14px; line-height: 1.8; }
 dialog label { display: block; margin: 18px 0 8px; }
 dialog label span { color: var(--muted); }
@@ -147,7 +149,7 @@ dialog input { width: 100%; padding: 12px; border: 1px solid var(--line); border
 }
 @media (max-width: 1050px) {
   .app { grid-template-columns: 200px minmax(0, 1fr); height: auto; min-height: 100dvh; }
-  .sidebar, main { height: 100dvh; min-height: 480px; }
+  .sidebar, .app > main { height: 100dvh; min-height: 480px; }
   .sidebar { padding-left: 16px; padding-right: 16px; }
   .people-sidebar { grid-column: 1 / -1; border-left: 0; border-top: 1px solid var(--line); padding: 22px; }
   .people-header { justify-content: flex-start; }
@@ -171,7 +173,7 @@ dialog input { width: 100%; padding: 12px; border: 1px solid var(--line); border
   .nav-room, .dm-room { width: auto; flex-shrink: 0; padding: 8px 10px; font-size: 12px; }
   .nav-room .count { display: none; }
   .dm-room { margin-top: 6px; }
-  main { height: calc(100dvh - 118px); min-height: 440px; }
+  .app > main { height: calc(100dvh - 118px); min-height: 440px; }
   .topbar { min-height: 58px; padding: 10px 20px; }
   .room-heading { padding: 20px; }
   h1 { font-size: 20px; }
@@ -296,7 +298,7 @@ dialog input, #emoji-search { border: 1px solid var(--line); border-radius: 0; b
 .topbar-actions { display: flex; align-items: center; gap: 12px; }
 .faq-link { padding: 8px 10px; border-radius: 6px; background: transparent; color: var(--accent); font-size: 12px; }
 .faq-link:hover { background: var(--accent-soft); }
-.faq-dialog { width: min(680px, calc(100% - 32px)); padding: 24px; }
+.faq-dialog { --dialog-padding: 24px; width: min(680px, calc(100% - 32px)); }
 .faq-dialog h2 { margin: 8px 0; font-size: clamp(20px, 4vw, 26px); }
 .faq-dialog .close-dialog { flex-shrink: 0; }
 .faq-section { margin-top: 28px; }
@@ -309,7 +311,7 @@ dialog input, #emoji-search { border: 1px solid var(--line); border-radius: 0; b
 .faq-section details p { margin: 0 0 16px; }
 @media (max-width: 600px) {
   .topbar-actions { gap: 4px; }
-  .faq-dialog { padding: 20px; }
+  .faq-dialog { --dialog-padding: 20px; }
 }
 
 :root {
@@ -423,7 +425,24 @@ dialog input, #emoji-search { border-radius: 7px; background: var(--side); }
 .group-member-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 #group-error { color: var(--danger); font-size: 13px; }
 #group-details { margin-left: auto; }
-#room-rules { margin: 0; padding: 12px 32px; border-bottom: 1px solid var(--line); color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 120px; overflow: auto; }
+#room-rules { flex-shrink: 0; margin: 0; padding: 12px 32px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+#room-rules summary { width: fit-content; cursor: pointer; color: var(--text); }
+#room-rules summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+#room-rules p { margin: 10px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 100px; overflow: auto; line-height: 1.6; }
+.group-chat .room-heading { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; flex-shrink: 0; padding-top: 20px; padding-bottom: 20px; }
+.group-chat .room-heading .eyebrow { display: block; margin-bottom: 6px; color: var(--muted); font-size: 11px; letter-spacing: 0; }
+.group-chat .room-heading h1 { margin-bottom: 4px; }
+.group-chat .room-heading p { line-height: 1.6; }
+.group-chat .room-badge { display: none; }
+.group-chat #group-details { margin: 0; padding: 9px 12px; border: 1px solid var(--line); background: var(--side); white-space: nowrap; }
+.group-chat .empty-chat { margin: 24px 0; padding: 16px; border: 1px dashed var(--line); border-radius: 8px; text-align: left; line-height: 1.6; }
+.group-chat .topbar, .group-chat .composer-wrap { flex-shrink: 0; }
+@media (max-width: 1250px) {
+  .group-chat .room-heading { grid-template-columns: 38px minmax(0, 1fr); }
+  .group-chat #group-details { grid-column: 2; justify-self: start; white-space: normal; }
+  .group-chat .topbar { flex-wrap: wrap; gap: 8px; }
+  .group-chat .topbar-actions { flex-wrap: wrap; }
+}
 @media (max-width: 600px) {
   .sidebar .group-label { display: flex; margin: 8px 0; }
   #groups { display: flex; flex-wrap: wrap; gap: 4px; }
