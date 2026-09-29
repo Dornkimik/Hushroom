@@ -8,7 +8,14 @@ import { Attachments } from './lib/attachments.mjs';
 import { Groups } from './lib/groups.mjs';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
-const dataDir = process.env.DATA_DIR || path.join(root, 'data');
+const dataDir = path.resolve(process.env.DATA_DIR || process.env.RAILWAY_VOLUME_MOUNT_PATH || path.join(root, 'data'));
+if (process.env.RAILWAY_ENVIRONMENT_ID) {
+  const mount = process.env.RAILWAY_VOLUME_MOUNT_PATH;
+  const relative = mount ? path.relative(path.resolve(mount), dataDir) : null;
+  if (relative === null || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    console.warn('Persistent storage is not configured: attach a Railway volume and unset DATA_DIR, or set DATA_DIR inside its mount path. Main rooms, bans, and feedback may be lost on redeploy.');
+  }
+}
 await mkdir(dataDir, { recursive: true });
 let rooms;
 try { rooms = JSON.parse(await readFile(path.join(dataDir, 'rooms.json'), 'utf8')); }
@@ -16,7 +23,11 @@ catch (e) { if (e.code !== 'ENOENT') throw e; rooms = [
   { id: 'the-living-room', name: 'The living room', description: 'A little company. A good conversation.' },
   { id: 'after-hours', name: 'After hours', description: 'For night owls and wandering thoughts.' },
   { id: 'creative-corner', name: 'Creative corner', description: 'Ideas, works in progress, and happy accidents.' }
-]; }
+];
+  // Seed once, then preserve the saved list, including an intentionally empty list.
+  await writeFile(path.join(dataDir, 'rooms.tmp'), JSON.stringify(rooms, null, 2));
+  await rename(path.join(dataDir, 'rooms.tmp'), path.join(dataDir, 'rooms.json'));
+}
 let bans;
 try { bans = new Map(JSON.parse(await readFile(path.join(dataDir, 'bans.json'), 'utf8')).map(ban => [ban.key, ban])); }
 catch (e) { if (e.code !== 'ENOENT') throw e; bans = new Map(); }

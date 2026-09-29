@@ -104,6 +104,12 @@ For a permanent password, copy `.env.example` to `.env`, set `ADMIN_PASSWORD` to
 
 Deploy the full project to a host that can run a long-lived Node.js process; static-only hosting cannot run the chat server. Set `HOST=0.0.0.0`, `PORT` to the host's assigned port, a strong `ADMIN_PASSWORD`, `ORIGIN` to the exact public HTTPS origin with no trailing slash, and `SECURE_COOKIES=true`.
 
+On Railway, attach a **Volume** to the SilenzaChat service and mount it at **`/data`**. Leave `DATA_DIR` unset: the app automatically uses Railway's `RAILWAY_VOLUME_MOUNT_PATH`. If you already set `DATA_DIR`, remove it or point it inside the mounted volume (for example `/data`). Redeploy after attaching the volume. [Railway volume setup](https://docs.railway.com/volumes).
+
+Main/public rooms created under Room management are saved in `rooms.json` on that volume. Their IDs, names, descriptions, and deletions survive restarts and new deployments. The three starter rooms are seeded only when no saved room file exists; deleting all main rooms keeps the list empty after restart. Bans and feedback use the same storage. Message history and user-created temporary rooms still live only in memory.
+
+If you currently have rooms you want to keep on an ephemeral deployment, copy its `rooms.json` into the volume before starting the new deployment. Data already lost in an earlier deployment cannot be recovered by this change. Keep the volume attached to the same service and use one replica. The app logs a storage warning on Railway if the selected data directory is outside the attached volume.
+
 Put HTTPS in front of the server and keep the `data` directory on persistent storage. Configure the proxy to allow streaming responses on `/api/events`, with buffering disabled and a timeout longer than the 20-second heartbeat. Install production dependencies with `npm ci --omit=dev`, then start with `npm start`. HTTPS (or localhost) and IndexedDB are required for private chats. Configure the reverse proxy to accept encrypted uploads up to 4 MB plus 16 bytes. Set `ATTACHMENT_TTL_SECONDS` to 1–86400 to shorten image retention; the default is 86400.
 
 Run **one server process / one replica**. Sessions and message histories are held in that process; multiple replicas need a shared identity store and message broker. The app includes message limits, admin login throttling, origin checks, escaped text rendering, and security headers. Larger public communities also need host-level abuse protection, moderation/reporting controls, and appropriate load testing.
