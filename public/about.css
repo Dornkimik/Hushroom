@@ -1,0 +1,38 @@
+.about-page { min-height: 100vh; }
+.about-shell { max-width: 1040px; margin: 0 auto; padding: 0 32px; }
+.about-header, .about-footer { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.about-header { min-height: 88px; border-bottom: 1px solid var(--line); }
+.about-main { display: block; max-width: 820px; margin: 0 auto; padding: 72px 0 80px; }
+.about-main h1 { max-width: 700px; margin: 0 0 20px; font-size: clamp(36px, 6vw, 64px); line-height: 1.1; letter-spacing: -2px; }
+.about-main h2 { margin: 0 0 20px; font-size: clamp(23px, 3vw, 30px); line-height: 1.25; letter-spacing: -.7px; }
+.about-main h3 { margin: 0 0 12px; font-size: 16px; }
+.about-main p, .about-steps { color: var(--muted); font-size: 15px; line-height: 1.8; }
+.about-main p { margin: 0 0 16px; }
+.about-main .about-lead { max-width: 730px; margin-bottom: 26px; font-size: 18px; }
+.about-main .about-eyebrow { margin-bottom: 18px; color: var(--accent); font-size: 11px; font-weight: 700; letter-spacing: 1.7px; }
+.about-main section { margin-top: 76px; }
+.about-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.about-card { padding: 22px; border: 1px solid var(--line); border-radius: 12px; background: var(--side); }
+.about-card p { margin: 0; font-size: 13px; }
+.about-steps { padding-left: 22px; }
+.about-steps li { margin-bottom: 16px; padding-left: 8px; }
+.about-steps strong { color: var(--text); }
+.about-cta { display: inline-flex; align-items: center; gap: 14px; padding: 12px 16px; border: 1px solid var(--line); border-radius: 8px; font-size: 13px; font-weight: 700; }
+.about-cta:hover { border-color: var(--accent); }
+.about-primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.about-primary:hover { opacity: .9; }
+.about-last a:not(.about-cta) { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
+.about-last .about-cta { margin-top: 10px; }
+.about-footer { justify-content: flex-start; gap: 26px; min-height: 80px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+.about-footer a:hover { color: var(--accent); }
+@media (max-width: 650px) {
+  .about-shell { padding: 0 20px; }
+  .about-header { min-height: 72px; }
+  .about-header .brand { font-size: 19px; }
+  .about-header .brand-icon { width: 26px; height: 26px; font-size: 22px; }
+  .about-main { padding: 52px 0 64px; }
+  .about-main h1 { letter-spacing: -1.4px; }
+  .about-main .about-lead { font-size: 16px; }
+  .about-main section { margin-top: 58px; }
+  .about-cards { grid-template-columns: 1fr; }
+}

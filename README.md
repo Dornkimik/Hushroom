@@ -98,6 +98,10 @@ Put HTTPS in front of the server and keep the `data` directory on persistent sto
 
 Run **one server process / one replica**. Sessions and message histories are held in that process; multiple replicas need a shared identity store and message broker. The app includes message limits, admin login throttling, origin checks, escaped text rendering, and security headers. Larger public communities also need host-level abuse protection, moderation/reporting controls, and appropriate load testing.
 
+### Search visibility
+
+The homepage and `/about/` have descriptive titles, canonical URLs, and a sitemap at `/sitemap.xml`. The canonical URLs and sitemap currently use `https://silenzachat.cc`; update them if you deploy under another public domain. After deployment, add the site to Google Search Console, submit the sitemap, and inspect both URLs to check whether Google can index them. Search appearance and ranking depend on Google's crawl and evaluation, so these changes do not guarantee traffic.
+
 ### Verify
 
 Run `npm test` for crypto, storage, and integration tests covering authentication, tampering, verification codes, ownership, expiry, quotas, real-time delivery, private-history isolation, admin permissions, input limits, room persistence, deletion, and origin protection.

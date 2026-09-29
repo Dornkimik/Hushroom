@@ -2,8 +2,11 @@
 <html lang="en">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="description" content="A little less noise. A little more conversation. Anonymous rooms and private chats.">
-  <title>SilenzaChat — Quietly together</title>
+  <meta name="description" content="Join anonymous chat rooms without registration. Talk in public rooms or start an end-to-end encrypted private chat or temporary room. No email or real name required.">
+  <link rel="canonical" href="https://silenzachat.cc/">
+  <meta property="og:type" content="website"><meta property="og:url" content="https://silenzachat.cc/"><meta property="og:title" content="Anonymous Chat Rooms, No Registration | SilenzaChat"><meta property="og:description" content="Join anonymous chat rooms without registration. Public rooms and end-to-end encrypted private chats and temporary rooms.">
+  <meta name="twitter:card" content="summary">
+  <title>Anonymous Chat Rooms, No Registration | SilenzaChat</title>
   <script src="/theme.js"></script>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/style.css">
   <script src="/vendor/nacl.js" defer></script>
@@ -14,7 +17,7 @@
   <div class="app">
     <aside class="sidebar">
       <a class="brand" href="/" aria-label="SilenzaChat home"><span class="brand-icon">s<span>+</span></span>silenza<span class="brand-dot">chat</span></a>
-      <div class="sidebar-intro">Quiet rooms. Real connection.</div>
+      <div class="sidebar-intro">Anonymous chat rooms. No registration.</div>
       <div class="section-label">Rooms <span id="room-count">0</span></div>
       <nav id="rooms" aria-label="Chat rooms"></nav>
       <div class="section-label dm-label group-label">Temporary rooms <button id="create-group" type="button" aria-label="Create a temporary room">＋ Create</button></div><nav id="groups" aria-label="Temporary rooms"></nav><p id="groups-empty" class="aside-hint">Create a room for your own group.</p><div class="section-label dm-label">Private chats <span>↗</span></div>
@@ -26,10 +29,10 @@
       </div>
     </aside>
     <main>
-      <header class="topbar"><span class="connection" id="connection">Connecting…</span><div class="topbar-actions"><button id="faq-button" class="faq-link" type="button" aria-haspopup="dialog" aria-controls="privacy-dialog">FAQ</button><div class="theme-control"><label class="sr-only" for="theme-select">Color theme</label><select id="theme-select" aria-label="Color theme"><option value="system">System theme</option><option value="light">Light theme</option><option value="dark">Dark theme</option></select></div></div></header>
+      <header class="topbar"><span class="connection" id="connection">Connecting…</span><div class="topbar-actions"><a class="faq-link" href="/about/">How it works</a><button id="faq-button" class="faq-link" type="button" aria-haspopup="dialog" aria-controls="privacy-dialog">FAQ</button><div class="theme-control"><label class="sr-only" for="theme-select">Color theme</label><select id="theme-select" aria-label="Color theme"><option value="system">System theme</option><option value="light">Light theme</option><option value="dark">Dark theme</option></select></div></div></header>
       <section class="room-heading"><div class="room-symbol" id="room-symbol">#</div><div><div class="eyebrow" id="conversation-type">COME AS YOU ARE</div><h1 id="room-title">The living room</h1><p id="room-description">A little company. A good conversation.</p></div><span class="room-badge" id="room-badge">OPEN ROOM</span><button id="group-details" class="text-button" type="button" hidden>Room details &amp; members</button></section><p id="room-rules" hidden></p>
       <div class="chat-scroll" id="chat-scroll">
-        <div class="welcome" id="welcome"><h2>Make yourself at home.</h2><p>No introductions needed.<br>A simple hello is a good place to start.</p></div>
+        <div class="welcome" id="welcome"><h2>Make yourself at home.</h2><p>Join a public room without an account or email. Choose someone online for an encrypted private chat.</p></div>
         <div class="day-divider"><span>Conversation</span></div>
         <div id="messages" role="log" aria-live="polite" aria-label="Chat messages"></div>
         <p class="empty-chat" id="empty-chat">It’s quiet in here. Be the first to say hello.</p>

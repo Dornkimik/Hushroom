@@ -65,7 +65,7 @@ function updateHeading() {
   $('#message').placeholder = privateChat ? 'Say something, just to them…' : 'Leave a little thought…';
   updateComposerState();
   $('#welcome h2').textContent = privateChat ? 'A little more personal.' : 'Make yourself at home.';
-  $('#welcome p').textContent = privateChat ? 'One conversation. Just the two of you.\nA simple hello is a good place to start.' : 'No introductions needed. A simple hello is a good place to start.';
+  $('#welcome p').textContent = privateChat ? 'One conversation. Just the two of you.\nA simple hello is a good place to start.' : 'Join a public room without an account or email. Choose someone online for an encrypted private chat.';
 }
 function matches(message, target = current) { return target && (target.group ? message.group === target.group : message.group ? false : target.peer ? !message.room && ((message.sender === me.id && message.recipient === target.peer) || (message.sender === target.peer && message.recipient === me.id)) : message.room === target.room); }
 async function select(target) {
