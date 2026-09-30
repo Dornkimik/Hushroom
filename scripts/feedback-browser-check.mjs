@@ -1,3 +1,4 @@
+import { enterGuest, enterAccount, signOut } from './auth-browser-helper.mjs';
 import { chromium } from 'playwright';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
@@ -11,7 +12,7 @@ const data = await mkdtemp(path.join(tmpdir(), 'silenza-feedback-browser-'));
 const probe = net.createServer(); probe.listen(0, '127.0.0.1'); await once(probe, 'listening');
 const port = probe.address().port; await new Promise(resolve => probe.close(resolve));
 const origin = `http://127.0.0.1:${port}`;
-const server = spawn(process.execPath, ['server.mjs'], { cwd: new URL('..', import.meta.url), env: { ...process.env, DATA_DIR: data, PORT: String(port), HOST: '127.0.0.1', ORIGIN: origin, ADMIN_PASSWORD: 'feedback-browser' }, stdio: ['ignore', 'pipe', 'pipe'] });
+const server = spawn(process.execPath, ['server.mjs'], { cwd: new URL('..', import.meta.url), env: { ...process.env, DATA_DIR: data, PORT: String(port), HOST: '127.0.0.1', ORIGIN: origin, ADMIN_USERNAME: 'host', ADMIN_PASSWORD: 'feedback-browser' }, stdio: ['ignore', 'pipe', 'pipe'] });
 let browser;
 try {
   await once(server.stdout, 'data');
@@ -39,8 +40,8 @@ try {
   }
   if (process.env.FEEDBACK_SCREENSHOT_DIR) await user.screenshot({ path: path.join(process.env.FEEDBACK_SCREENSHOT_DIR, 'feedback-form.png') });
   await user.getByRole('button', { name: 'Close feedback' }).click();
-  await admin.goto(`${origin}/chat/`);
-  await admin.locator('#open-admin').click(); await admin.getByLabel('Admin password').fill('feedback-browser'); await admin.getByRole('button', { name: 'Unlock controls' }).click();
+  await enterAccount(admin, origin, 'feedback-browser');
+  await admin.locator('#open-admin').click();
   await admin.locator('.feedback-entry').waitFor();
   assert.equal(await admin.locator('#feedback-count').textContent(), '(1 new)');
   assert.equal(await admin.locator('.feedback-entry img').count(), 0);
@@ -55,8 +56,7 @@ try {
   await admin.locator('.feedback-entry summary').click(); admin.on('dialog', dialog => dialog.accept());
   await admin.locator('.feedback-entry').getByRole('button', { name: 'Delete', exact: true }).click();
   await admin.getByText('No feedback yet.', { exact: true }).waitFor();
-  await admin.getByRole('button', { name: 'Lock admin controls' }).click();
-  assert.equal(await admin.locator('#admin-feedback').textContent(), '');
+  await signOut(admin, origin);
   assert.deepEqual(errors, []);
   console.log('PASS: feedback from landing/chat, retry with draft retained, responsive form, safe admin rendering, review, delete and logout.');
 } finally {

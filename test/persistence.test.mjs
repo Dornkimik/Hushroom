@@ -17,7 +17,7 @@ test('Railway volume keeps main rooms and deletions across deployments, includin
     warnings = '';
     child = spawn(process.execPath, ['server.mjs'], { cwd: new URL('..', import.meta.url),
       env: { ...process.env, DATA_DIR: '', RAILWAY_ENVIRONMENT_ID: 'test', RAILWAY_VOLUME_MOUNT_PATH: volume,
-        PORT: String(port), HOST: '127.0.0.1', ORIGIN: origin, ADMIN_PASSWORD: 'persistent-test', ...extra }, stdio: ['ignore', 'pipe', 'pipe'] });
+        PORT: String(port), HOST: '127.0.0.1', ORIGIN: origin, ADMIN_USERNAME: 'host', ADMIN_PASSWORD: 'persistent-test', ...extra }, stdio: ['ignore', 'pipe', 'pipe'] });
     child.stderr.on('data', chunk => { warnings += chunk; });
     await new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('Startup timed out')), 10000);
@@ -31,20 +31,21 @@ test('Railway volume keeps main rooms and deletions across deployments, includin
   async function stop() { if (child && child.exitCode === null) { const done = once(child, 'exit'); child.kill(); await done; } }
   async function post(route, body) {
     const res = await fetch(`${origin}/api/${route}`, { method: 'POST', headers: { Cookie: cookie, Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (res.headers.get('set-cookie')) cookie = res.headers.get('set-cookie').split(';')[0];
     assert.equal(res.status, 200); return res.json();
   }
   const saved = () => readFile(path.join(volume, 'rooms.json'), 'utf8').then(JSON.parse);
   try {
     const first = await boot(); assert.equal(warnings, '');
     assert.equal((await saved()).length, 3);
-    await post('admin/login', { password: 'persistent-test' });
+    await post('auth/login', { username: 'host', password: 'persistent-test' });
     const created = await post('admin/create', { name: 'Permanent community', description: 'Survives deployment' });
     for (const room of first.rooms) await post('admin/delete', { id: room.id });
     await stop();
     const restarted = await boot();
-    assert.deepEqual(restarted.rooms.map(({ count, ...room }) => room), [created]);
+    assert.deepEqual(restarted.rooms.map(({ count, preview, ...room }) => room), [created]);
     assert.deepEqual(await saved(), [created]);
-    await post('admin/login', { password: 'persistent-test' });
+    await post('auth/login', { username: 'host', password: 'persistent-test' });
     await post('admin/delete', { id: created.id });
     await stop();
     assert.deepEqual((await boot()).rooms, []); assert.deepEqual(await saved(), []);

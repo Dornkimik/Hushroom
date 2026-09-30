@@ -14,13 +14,15 @@ test('feedback validation, admin isolation, throttling, review and durable delet
   const origin = `http://127.0.0.1:${port}`;
   let child;
   async function boot() {
-    child = spawn(process.execPath, ['server.mjs'], { cwd: new URL('..', import.meta.url), env: { ...process.env, DATA_DIR: data, PORT: String(port), HOST: '127.0.0.1', ORIGIN: origin, ADMIN_PASSWORD: 'feedback-test' }, stdio: ['ignore', 'pipe', 'pipe'] });
+    child = spawn(process.execPath, ['server.mjs'], { cwd: new URL('..', import.meta.url), env: { ...process.env, DATA_DIR: data, PORT: String(port), HOST: '127.0.0.1', ORIGIN: origin, ADMIN_USERNAME: 'host', ADMIN_PASSWORD: 'feedback-test-password' }, stdio: ['ignore', 'pipe', 'pipe'] });
     await once(child.stdout, 'data');
   }
   async function stop() { if (child && child.exitCode === null) { const ended = once(child, 'exit'); child.kill(); await ended; } }
   async function visitor() { return (await fetch(`${origin}/api/session`)).headers.get('set-cookie').split(';')[0]; }
+  const cookies = new Map();
   async function request(cookie, route, body, source = origin) {
-    const response = await fetch(`${origin}/api/${route}`, { method: body === undefined ? 'GET' : 'POST', headers: { Cookie: cookie, Origin: source, 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+    const response = await fetch(`${origin}/api/${route}`, { method: body === undefined ? 'GET' : 'POST', headers: { Cookie: cookies.get(cookie) || cookie, Origin: source, 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+    if (response.headers.get('set-cookie')) cookies.set(cookie, response.headers.get('set-cookie').split(';')[0]);
     return { status: response.status, data: await response.json() };
   }
   try {
@@ -34,7 +36,7 @@ test('feedback validation, admin isolation, throttling, review and durable delet
     }
     const content = { title: '  <img src=x onerror=alert(1)>  ', text: '  First line\nSecond line  ' };
     assert.equal((await request(user, 'feedback', content)).status, 201);
-    assert.equal((await request(admin, 'admin/login', { password: 'feedback-test' })).status, 200);
+    assert.equal((await request(admin, 'auth/login', { username: 'host', password: 'feedback-test-password' })).status, 200);
     const inbox = (await request(admin, 'admin/feedback')).data;
     assert.equal(inbox.length, 1); assert.equal(inbox[0].title, content.title.trim()); assert.equal(inbox[0].text, content.text.trim());
     assert.equal(inbox[0].reviewed, false); assert.ok(inbox[0].createdAt);
@@ -48,15 +50,15 @@ test('feedback validation, admin isolation, throttling, review and durable delet
     assert.equal(results.filter(result => result.status === 201).length, 2);
     assert.equal(results.filter(result => result.status === 429).length, 3);
     await stop(); await boot();
-    const nextAdmin = await visitor(); await request(nextAdmin, 'admin/login', { password: 'feedback-test' });
+    const nextAdmin = await visitor(); await request(nextAdmin, 'auth/login', { username: 'host', password: 'feedback-test-password' });
     const saved = (await request(nextAdmin, 'admin/feedback')).data;
     assert.equal(saved.length, 3); assert.equal(saved.find(item => item.id === id).reviewed, true);
     assert.equal((await request(nextAdmin, 'admin/feedback/delete', { id })).status, 200);
     assert.equal((await request(nextAdmin, 'admin/feedback/delete', { id })).status, 404);
-    await request(nextAdmin, 'admin/logout', {});
-    assert.equal((await request(nextAdmin, 'admin/feedback')).status, 403);
+    await request(nextAdmin, 'auth/logout', {});
+    assert.equal((await request(nextAdmin, 'admin/feedback')).status, 401);
     await stop(); await boot();
-    const finalAdmin = await visitor(); await request(finalAdmin, 'admin/login', { password: 'feedback-test' });
+    const finalAdmin = await visitor(); await request(finalAdmin, 'auth/login', { username: 'host', password: 'feedback-test-password' });
     assert.equal((await request(finalAdmin, 'admin/feedback')).data.some(item => item.id === id), false);
   } finally {
     await stop();

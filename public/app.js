@@ -24,7 +24,8 @@ function renderRooms() {
   $('#room-count').textContent = rooms.length;
   $('#rooms').replaceChildren(...rooms.map(room => {
     const button = element('button', `nav-room${current?.room === room.id ? ' active' : ''}`);
-    button.append(element('span', 'hash', '#'), element('span', 'name', room.name), element('span', 'count', room.count || 0));
+    const label = element('span', 'room-label'); label.append(element('span', 'name', room.name), element('small', 'room-preview', room.preview || room.description || 'No messages yet'));
+    button.append(element('span', 'hash', '#'), label, element('span', 'count', room.count || 0));
     button.setAttribute('aria-current', current?.room === room.id ? 'true' : 'false');
     button.onclick = () => select({ room: room.id }); return button;
   }));
@@ -109,7 +110,7 @@ function renderMessages() {
   $('#messages').replaceChildren(...messages.map(message => {
     const own = message.sender === me.id;
     const row = element('article', 'chat-message'), content = element('div', 'message-content'), meta = element('div', 'message-meta');
-    const displayAsAdmin = (own ? me : people.find(person => person.id === message.sender))?.displayAsAdmin ?? message.displayAsAdmin;
+    const displayAsAdmin = message.displayAsAdmin;
     meta.append(username(message.alias, 'message-name', displayAsAdmin));
     if (own) meta.append(element('span', 'you-tag', 'YOU'));
     meta.append(element('time', 'message-time', new Date(message.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })));
@@ -170,6 +171,7 @@ function applyRemoval(removed) {
   renderMessages();
 }
 async function receive(message) {
+  notifyMessage(message);
   if (!message.room && !message.group) {
     const peer = message.sender === me.id ? message.recipient : message.sender;
     if (!conversations.has(peer)) conversations.set(peer, people.find(p => p.id === peer)?.alias || message.alias);
@@ -362,7 +364,7 @@ function setReply(message) {
 $('#cancel-reply').onclick = () => { setReply(null); $('#message').focus(); };
 function status(text) { $('#command-status').textContent = text; $('#command-status').hidden = !text; }
 const commands = [
-  { name: '/help', description: 'Show commands' }, { name: '/ban', description: 'Ban an anonymous session' },
+  { name: '/help', description: 'Show commands' }, { name: '/ban', description: 'Ban an account or guest' },
   { name: '/unban', description: 'Restore a banned session' }, { name: '/remove', description: 'Remove the message you are replying to' }
 ];
 async function runCommand(text, reply) {
@@ -523,7 +525,7 @@ async function refreshFeedback() {
 }
 $('#refresh-feedback').onclick = refreshFeedback;
 function setAdmin(admin) {
-  me.admin = admin;
+  me.admin = admin; $('#open-admin').hidden = !admin;
   if (!admin) me.displayAsAdmin = false;
   $('#admin-login').hidden = admin; $('#admin-controls').hidden = !admin;
   $('#display-as-admin').checked = Boolean(me.displayAsAdmin);
@@ -532,13 +534,10 @@ function setAdmin(admin) {
   else { adminStateRequest++; adminGroups = []; renderAdminGroups(); $('#moderate-group-dialog').close(); feedbackRequest++; $('#admin-feedback').replaceChildren(); $('#feedback-count').textContent = ''; $('#feedback-inbox-status').textContent = ''; }
 }
 function updateAppearance(person) {
-  for (const message of messages) if (message.sender === person.id) {
-    message.displayAsAdmin = person.displayAsAdmin;
-    // Update only the name so reading position and loaded images are preserved.
-    document.getElementById(`message-${message.id}`)?.querySelector('.message-name')?.replaceWith(username(message.alias, 'message-name', person.displayAsAdmin));
-  }
+  people = people.map(p => p.id === person.id ? { ...p, ...person } : p);
+  renderPeople(); renderDMs();
 }
-function updateSession(session) { Object.assign(me, session); setAdmin(me.admin); updateAppearance(me); renderMessages(); }
+function updateSession(session) { Object.assign(me, session); $('#identity-kind').textContent = me.account ? 'Persistent account' : 'Guest identity'; setAdmin(me.admin); updateAppearance(me); renderMessages(); }
 $('#display-as-admin').onchange = async event => {
   const toggle = event.target; toggle.disabled = true;
   try { updateSession(await api('admin/appearance', { displayAsAdmin: toggle.checked })); $('#admin-error').textContent = ''; }
@@ -563,7 +562,7 @@ function renderAdminPeople() {
     const row = element('div', 'admin-person'), button = element('button', 'danger-small', 'Ban');
     row.append(username(`${person.alias}${person.id === me?.id ? ' (you)' : ''}`, '', person.displayAsAdmin), button);
     button.disabled = person.id === me?.id;
-    button.onclick = () => { banning = person; $('#ban-description').textContent = `“${person.alias}” will be disconnected and this browser session will no longer be able to rejoin. Other anonymous sessions are unaffected.`; $('#ban-error').textContent = ''; $('#ban-dialog').showModal(); };
+    button.onclick = () => { banning = person; $('#ban-description').textContent = `“${person.alias}” will be disconnected. An account ban blocks all sessions and future logins for that account. A guest ban blocks this browser session.`; $('#ban-error').textContent = ''; $('#ban-dialog').showModal(); };
     return row;
   }));
   if (!people.length) list.append(element('p', 'admin-empty', 'No one is online.'));
@@ -576,10 +575,8 @@ function renderAdminBans() {
     button.onclick = async () => { button.disabled = true; try { await api('admin/unban', { id: ban.id }); await refreshAdminState(); } catch(e) { $('#admin-error').textContent = e.message; button.disabled = false; } };
     return row;
   }));
-  if (!adminBans.length) list.append(element('p', 'admin-empty', 'No banned sessions.'));
+  if (!adminBans.length) list.append(element('p', 'admin-empty', 'No banned users.'));
 }
-$('#admin-login').onsubmit = async event => { event.preventDefault(); try { updateSession(await api('admin/login', { password: $('#admin-password').value })); $('#admin-password').value = ''; $('#admin-error').textContent = ''; await refreshAdminState(); } catch(e) { $('#admin-error').textContent = e.message; } };
-$('#admin-logout').onclick = async () => { try { updateSession(await api('admin/logout', {})); } catch(e) { $('#admin-error').textContent = e.message; } };
 $('#create-room').onsubmit = async event => { event.preventDefault(); const button = $('#create-room button'); button.disabled = true; try { await api('admin/create', { name: $('#new-room').value, description: $('#new-description').value }); $('#create-room').reset(); $('#admin-error').textContent = ''; } catch(e) { $('#admin-error').textContent = e.message; } finally { button.disabled = false; } };
 function renderAdminRooms() {
   $('#admin-rooms').replaceChildren(...rooms.map(room => { const row = element('div', 'admin-room'), button = element('button', 'delete-room', 'Remove'); row.append(element('span', '', room.name), button); button.onclick = () => { deleting = { id: room.id, group: false }; $('#delete-description').textContent = `“${room.name}” and its message history will be removed for everyone. This cannot be undone.`; $('#delete-error').textContent = ''; $('#delete-dialog').showModal(); }; return row; }));
@@ -590,7 +587,10 @@ $('#cancel-ban').onclick = () => $('#ban-dialog').close();
 $('#confirm-ban').onclick = async () => { $('#confirm-ban').disabled = true; try { await api('admin/ban', { id: banning.id }); $('#ban-dialog').close(); await refreshAdminState(); } catch(e) { $('#ban-error').textContent = e.message; } finally { $('#confirm-ban').disabled = false; } };
 async function start() {
   try {
+    const auth = await api('auth/status');
+    if (!auth.me) { location.replace('/#entry'); return; }
     const data = await api('session'); me = data.me; rooms = data.rooms; people = data.people; groupRooms = data.groups || [];
+    $('#identity-kind').textContent = me.account ? 'Persistent account' : 'Guest identity';
     try { encryptionClient = await SilenzaCrypto.createClient(me.id, api); } catch(e) { encryptionError = e.message; }
     for (const person of data.conversations || []) conversations.set(person.id, person.alias);
     $('#my-alias').textContent = me.alias; $('.me-avatar').textContent = me.alias.split(' ').slice(0,2).map(x => x[0]).join(''); setAdmin(me.admin); renderPeople(); renderAdminPeople();
@@ -598,7 +598,7 @@ async function start() {
     await select(rooms[0] ? { room: rooms[0].id } : null);
     stream = new EventSource('/api/events');
     stream.onopen = () => { $('#connection').textContent = 'Connected'; $('#connection').classList.add('live'); if (current) select(current); };
-    stream.onerror = () => { $('#connection').textContent = 'Reconnecting…'; $('#connection').classList.remove('live'); };
+    stream.onerror = async () => { $('#connection').textContent = 'Reconnecting…'; $('#connection').classList.remove('live'); try { const auth = await api('auth/status'); if (!auth.me || auth.me.id !== me.id) { stream.close(); location.replace('/#entry'); } } catch {} };
     stream.addEventListener('identity-ready', event => { const { id } = JSON.parse(event.data); if (current?.peer === id && !peerIdentity) select(current); });
     stream.addEventListener('session', event => updateSession(JSON.parse(event.data)));
     stream.addEventListener('groups-changed', () => { refreshGroups(); refreshAdminState(); });
@@ -625,5 +625,39 @@ async function start() {
     }, 10000);
   } catch(e) { error(e.message); $('#connection').textContent = 'Could not connect'; }
 }
+let soundSettings = { private: false, groups: false, rooms: false }, audioContext, lastSound = 0;
+try { const saved = JSON.parse(localStorage.getItem('silenza-sounds')); for (const key of Object.keys(soundSettings)) soundSettings[key] = saved?.[key] === true; } catch {}
+async function playSound() {
+  const Audio = window.AudioContext || window.webkitAudioContext;
+  if (!Audio) throw new Error('Audio notifications are unavailable in this browser.');
+  audioContext ||= new Audio();
+  await audioContext.resume();
+  if (audioContext.state !== 'running') throw new Error('Use Test sound to enable audio in this tab.');
+  const oscillator = audioContext.createOscillator(), volume = audioContext.createGain(), now = audioContext.currentTime;
+  oscillator.type = 'sine'; oscillator.frequency.setValueAtTime(660, now);
+  volume.gain.setValueAtTime(0, now); volume.gain.linearRampToValueAtTime(0.08, now + 0.02); volume.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+  oscillator.connect(volume); volume.connect(audioContext.destination); oscillator.start(now); oscillator.stop(now + 0.25);
+  oscillator.onended = () => { oscillator.disconnect(); volume.disconnect(); };
+}
+function notifyMessage(message) {
+  const kind = message.group ? 'groups' : message.room ? 'rooms' : 'private';
+  if (message.sender === me.id || !soundSettings[kind] || Date.now() - lastSound < 800) return;
+  lastSound = Date.now();
+  playSound().catch(e => { $('#sound-status').textContent = e.message; });
+}
+$('#open-settings').onclick = () => $('#settings-dialog').showModal();
+for (const key of Object.keys(soundSettings)) {
+  const input = $(`#sound-${key}`); input.checked = soundSettings[key];
+  input.onchange = () => {
+    soundSettings[key] = input.checked;
+    try { localStorage.setItem('silenza-sounds', JSON.stringify(soundSettings)); } catch { $('#sound-status').textContent = 'This browser could not save your sound preferences.'; }
+    if (input.checked) playSound().catch(e => { $('#sound-status').textContent = e.message; });
+  };
+}
+$('#test-sound').onclick = () => playSound().then(() => { $('#sound-status').textContent = 'Sound is enabled in this tab.'; }).catch(e => { $('#sound-status').textContent = e.message; });
+$('#account-signout').onclick = async () => {
+  try { await api('auth/logout', {}); stream?.close(); location.assign('/#entry'); }
+  catch (e) { $('#sound-status').textContent = e.message; }
+};
 setupGroups();
 start();

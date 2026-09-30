@@ -469,3 +469,14 @@ dialog input, #emoji-search { border-radius: 7px; background: var(--side); }
 }
 
 #edit-message-dialog textarea { width: 100%; min-height: 110px; padding: 10px; border: 1px solid var(--line); background: var(--side); resize: vertical; }
+#entry { scroll-margin-top: 24px; }
+.account-form { display: grid; gap: 10px; max-width: 430px; margin-top: 24px; }
+.account-form input, .account-form select { width: 100%; padding: 12px; border: 1px solid var(--line); border-radius: 7px; background: var(--side); color: var(--text); font: inherit; }
+.account-form p { font-size: 12px; }
+#account-error { color: var(--danger); }
+.room-label { flex: 1; min-width: 0; text-align: left; }
+.room-label .name, .room-preview { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.room-preview { margin-top: 4px; color: var(--muted); font-size: 11px; font-weight: 400; }
+.sound-choice { display: flex; gap: 10px; align-items: center; margin: 16px 0; }
+.sound-choice input { width: auto; margin: 0; }
+#emoji-grid button, #emoji-toggle { font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif; font-variant-emoji: emoji; }

@@ -13,7 +13,7 @@ function setup() {
     const identity = nacl.box.keyPair(); return { id: randomUUID(), alias, identity, publicKey: crypto.base64(identity.publicKey), sent: [] };
   });
   const attachments = new Attachments({ now: () => time });
-  const store = new Groups({ attachments, now: () => time, emit: (u, event, data) => events.push({ user: u.id, event, data }), broadcast: () => {},
+  const store = new Groups({ isAdmin: u => u.role === 'admin', attachments, now: () => time, emit: (u, event, data) => events.push({ user: u.id, event, data }), broadcast: () => {},
     safeUser: u => ({ id: u.id, alias: u.alias, displayAsAdmin: false }), findUser: id => users.find(u => u.id === id) });
   const call = (u, action, input = {}, method = 'POST') => store.handle(method, action, u, input);
   const send = (u, group, text = 'secret group sentinel', replyTo) => {
@@ -180,7 +180,7 @@ test('admin room moderation preserves encryption boundaries and cleans up delete
   const { store, attachments, users: [owner, admin], call, send, events, advance } = setup();
   const room = call(owner, 'create', { name: 'Private room', access: 'invite' });
   assert.throws(() => store.moderate('list', admin), /Unlock/);
-  admin.adminUntil = store.now() + 10000;
+  admin.role = 'admin';
   const message = call(owner, 'message', send(owner, room.id));
   const upload = await attachments.upload(Readable.from([new Uint8Array(32)]), owner.id, null, { group: room.id, version: room.version });
   assert.equal(store.moderate('list', admin)[0].id, room.id);
@@ -194,10 +194,12 @@ test('admin room moderation preserves encryption boundaries and cleans up delete
   assert.throws(() => call(admin, 'history', { group: room.id }, 'GET'), /Join/);
   assert.equal(call(owner, 'history', { group: room.id }, 'GET')[0].id, message.id);
   assert.ok(events.some(e => e.user === owner.id && e.event === 'group-state' && e.data.name === 'Updated'));
-  advance(10001);
+  advance(3600001);
+  assert.equal(store.moderate('list', admin)[0].id, room.id);
+  admin.role = 'member';
   assert.throws(() => store.moderate('update', admin, { group: room.id, name: 'Expired admin' }), /Unlock/);
   assert.throws(() => store.moderate('delete', admin, { group: room.id }), /Unlock/);
-  admin.adminUntil += 20000;
+  admin.role = 'admin';
   store.moderate('delete', admin, { group: room.id });
   assert.equal(store.bytes, 0); assert.equal(attachments.items.has(upload.id), false);
   assert.ok(events.some(e => e.user === owner.id && e.event === 'group-removed'));

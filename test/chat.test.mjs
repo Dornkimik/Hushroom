@@ -16,7 +16,7 @@ test('anonymous public chat, private isolation, admin control and persistence', 
   const origin = `http://127.0.0.1:${port}`;
   let child; const streams = [];
   async function boot() {
-    child = spawn(process.execPath, ['server.mjs'], { cwd: new URL('..', import.meta.url), env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', DATA_DIR: data, ADMIN_PASSWORD: 'integration-test-password', ORIGIN: origin }, stdio: ['ignore', 'pipe', 'pipe'] });
+    child = spawn(process.execPath, ['server.mjs'], { cwd: new URL('..', import.meta.url), env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', DATA_DIR: data, ADMIN_USERNAME: 'host', ADMIN_PASSWORD: 'integration-test-password', ORIGIN: origin }, stdio: ['ignore', 'pipe', 'pipe'] });
     await new Promise((resolve, reject) => { const timer = setTimeout(() => reject(new Error('Server startup timed out')), 10000); child.stdout.once('data', () => { clearTimeout(timer); resolve(); }); child.once('error', reject); child.once('exit', code => { clearTimeout(timer); reject(new Error(`Server exited: ${code}`)); }); });
   }
   async function stop() { if (child && child.exitCode === null) { const exit = once(child, 'exit'); child.kill(); await exit; } }
@@ -34,6 +34,7 @@ test('anonymous public chat, private isolation, admin control and persistence', 
   const decrypt = (message, user, peer) => encryption.decryptMessage(message, user.me.id, user.identity, encryption.base64(peer.identity.publicKey));
   async function request(user, route, body, source = origin) {
     const res = await fetch(`${origin}/api/${route}`, { method: body === undefined ? 'GET' : 'POST', headers: { cookie: user.cookie, Origin: source, 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+    if (res.headers.get('set-cookie')) user.cookie = res.headers.get('set-cookie').split(';')[0];
     return { status: res.status, data: await res.json() };
   }
   async function events(user) {
@@ -98,8 +99,9 @@ test('anonymous public chat, private isolation, admin control and persistence', 
     assert.equal((await request(a, 'message/delete', { id: pub.data.id })).status, 200);
     await new Promise(resolve => setTimeout(resolve, 50));
     assert.ok(ae.removals.includes(dm.data.id)); assert.ok(be.removals.includes(dm.data.id)); assert.ok(!ce.removals.includes(dm.data.id));
-    assert.equal((await request(a, 'admin/login', { password: 'wrong' })).status, 403);
-    assert.equal((await request(a, 'admin/login', { password: 'integration-test-password' })).status, 200);
+    assert.equal((await request(a, 'auth/login', { username: 'host', password: 'wrong' })).status, 403);
+    assert.equal((await request(a, 'auth/login', { username: 'host', password: 'integration-test-password' })).status, 200);
+    await events(a);
     assert.equal((await request(a, 'session')).data.me.displayAsAdmin, false);
     const userRoom = (await request(b, 'groups/create', { name: 'User room', access: 'invite' })).data;
     const editRoom = { group: userRoom.id, name: 'Moderated room', description: 'Updated', rules: 'Be kind', access: 'open' };
@@ -153,14 +155,12 @@ test('anonymous public chat, private isolation, admin control and persistence', 
     const ciphertext = new Uint8Array(await downloaded.arrayBuffer());
     assert.deepEqual(ciphertext, encryptedImage.bytes); assert.notDeepEqual(ciphertext, plaintext);
     assert.deepEqual(encryption.decryptImage(ciphertext, decrypt(sentImage.data, b, a).image), plaintext);
-    assert.equal((await request(a, 'admin/logout', {})).status, 200);
+    await request(a, 'admin/appearance', { displayAsAdmin: false });
     assert.equal((await request(a, 'session')).data.me.displayAsAdmin, false);
-    assert.equal((await request(b, 'session')).data.people.find(p => p.id === a.me.id).displayAsAdmin, false);
-    assert.equal((await request(a, 'admin/appearance', { displayAsAdmin: true })).status, 403);
-    assert.equal((await request(b, `history?peer=${a.me.id}`)).data.find(m => m.id === sentImage.data.id).displayAsAdmin, false);
+    assert.equal((await request(b, `history?peer=${a.me.id}`)).data.find(m => m.id === sentImage.data.id).displayAsAdmin, true);
     assert.equal((await request(b, 'message/delete', { id: sentImage.data.id })).status, 404);
     assert.equal((await request(a, 'message/delete', { id: sentImage.data.id })).status, 200);
-    assert.equal((await request(a, 'admin/login', { password: 'integration-test-password' })).status, 200);
+    assert.equal((await request(a, 'auth/login', { username: 'host', password: 'integration-test-password' })).status, 200);
     assert.equal((await request(a, 'admin/remove-message', { id: literal.data.id })).status, 200);
     assert.equal((await fetch(imageURL, { headers: { Cookie: b.cookie } })).status, 404);
     await new Promise(resolve => setTimeout(resolve, 50)); assert.ok(!ce.removals.includes(sentImage.data.id));
@@ -176,10 +176,9 @@ test('anonymous public chat, private isolation, admin control and persistence', 
     const remove = creations[0].data.id;
     assert.equal((await request(a, 'admin/delete', { id: remove })).status, 200);
     assert.equal((await request(a, 'message', { room: remove, text: 'gone' })).status, 404);
-    assert.equal((await request(a, 'admin/logout', {})).status, 200);
-    assert.equal((await request(a, 'admin/delete', { id: room })).status, 403);
+    assert.equal((await request(b, 'admin/delete', { id: room })).status, 403);
     const d = await visitor();
-    assert.equal((await request(a, 'admin/login', { password: 'integration-test-password' })).status, 200);
+    assert.equal((await request(a, 'auth/login', { username: 'host', password: 'integration-test-password' })).status, 200);
     assert.equal((await request(a, 'admin/ban', { id: d.me.id })).status, 200);
     assert.equal((await request(a, 'groups/create', { name: 'Temporary room', access: 'open' })).status, 200);
     assert.equal((await request(a, 'groups')).data.length, 1);

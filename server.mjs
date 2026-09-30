@@ -1,11 +1,12 @@
 import http from 'node:http';
-import { randomBytes, randomUUID, timingSafeEqual, createHash } from 'node:crypto';
+import { randomBytes, randomUUID, createHash } from 'node:crypto';
 import { readFile, mkdir, writeFile, rename } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import nacl from 'tweetnacl';
 import { Attachments } from './lib/attachments.mjs';
 import { Groups } from './lib/groups.mjs';
+import { Accounts } from './lib/accounts.mjs';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const dataDir = path.resolve(process.env.DATA_DIR || process.env.RAILWAY_VOLUME_MOUNT_PATH || path.join(root, 'data'));
@@ -38,12 +39,18 @@ const attachmentTTL = Number(process.env.ATTACHMENT_TTL_SECONDS || 86400) * 1000
 if (!Number.isFinite(attachmentTTL) || attachmentTTL < 1000 || attachmentTTL > 86400000) throw new Error('ATTACHMENT_TTL_SECONDS must be between 1 and 86400.');
 const attachments = new Attachments({ ttl: attachmentTTL });
 const sessions = new Map(), histories = new Map(), attempts = new Map();
-const password = process.env.ADMIN_PASSWORD || randomBytes(18).toString('base64url');
+const accounts = new Accounts(dataDir);
+await accounts.load();
+// Bootstrap only a new installation. Never promote an existing user by name.
+if (process.env.ADMIN_USERNAME && process.env.ADMIN_PASSWORD && !accounts.items.length) {
+  await accounts.create(process.env.ADMIN_USERNAME, process.env.ADMIN_PASSWORD, 'admin');
+}
+const isAdmin = s => accounts.get(s.accountId)?.role === 'admin';
 const hash = value => createHash('sha256').update(value).digest();
 const adjectives = ['Velvet', 'Quiet', 'Cosmic', 'Silver', 'Mellow', 'Amber', 'Lunar'];
 const animals = ['Fox', 'Otter', 'Owl', 'Panda', 'Moth', 'Lynx', 'Finch'];
 const online = s => s.streams.size > 0;
-const displaysAsAdmin = s => s.displayAsAdmin === true && s.adminUntil > Date.now();
+const displaysAsAdmin = s => s.displayAsAdmin === true && isAdmin(s);
 const safeUser = s => ({ id: s.id, alias: s.alias, online: online(s), displayAsAdmin: displaysAsAdmin(s) });
 const emit = (s, event, data) => { for (const stream of s.streams) {
   if (stream.writableLength > 256000) { stream.destroy(); continue; }
@@ -51,11 +58,11 @@ const emit = (s, event, data) => { for (const stream of s.streams) {
 } };
 const broadcast = (event, data) => { for (const s of sessions.values()) emit(s, event, data); };
 const presence = () => broadcast('people', [...sessions.values()].filter(online).map(safeUser));
-const roomList = () => rooms.map(r => ({ ...r, count: [...sessions.values()].filter(s => online(s) && s.room === r.id).length }));
+const roomList = () => rooms.map(r => ({ ...r, preview: (histories.get(`room:${r.id}`) || []).at(-1)?.text?.slice(0, 100) || '', count: [...sessions.values()].filter(s => online(s) && s.room === r.id).length }));
 const publishRooms = () => broadcast('rooms', roomList());
-const publicSession = s => ({ ...safeUser(s), admin: s.adminUntil > Date.now() });
+const publicSession = s => ({ ...safeUser(s), admin: isAdmin(s), account: Boolean(s.accountId) });
 const publishAppearance = s => { emit(s, 'session', publicSession(s)); broadcast('appearance', safeUser(s)); presence(); };
-const groups = new Groups({ emit, broadcast, safeUser, attachments, findUser: id => [...sessions.values()].find(s => s.id === id) });
+const groups = new Groups({ isAdmin, emit, broadcast, safeUser, attachments, findUser: id => [...sessions.values()].find(s => s.id === id) });
 const keyFor = (s, room, peer) => peer ? `dm:${[s.id, peer].sort().join(':')}` : `room:${room}`;
 function publicMentions(text) {
   const mentions = [];
@@ -121,7 +128,7 @@ const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, 'http://localhost');
     if (!url.pathname.startsWith('/api/')) {
-      const files = { '/': ['about.html', 'text/html'], '/chat/': ['index.html', 'text/html'], '/robots.txt': ['robots.txt', 'text/plain'], '/sitemap.xml': ['sitemap.xml', 'application/xml'], '/about.css': ['about.css', 'text/css'], '/feedback.js': ['feedback.js', 'text/javascript'], '/app.js': ['app.js', 'text/javascript'], '/groups.js': ['groups.js', 'text/javascript'], '/crypto.js': ['crypto.js', 'text/javascript'], '/private.js': ['private.js', 'text/javascript'], '/vendor/nacl.js': ['../node_modules/tweetnacl/nacl-fast.min.js', 'text/javascript'], '/theme.js': ['theme.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'], '/favicon.svg': ['favicon.svg', 'image/svg+xml'] };
+      const files = { '/': ['about.html', 'text/html'], '/chat/': ['index.html', 'text/html'], '/robots.txt': ['robots.txt', 'text/plain'], '/sitemap.xml': ['sitemap.xml', 'application/xml'], '/about.css': ['about.css', 'text/css'], '/feedback.js': ['feedback.js', 'text/javascript'], '/auth.js': ['auth.js', 'text/javascript'], '/app.js': ['app.js', 'text/javascript'], '/groups.js': ['groups.js', 'text/javascript'], '/crypto.js': ['crypto.js', 'text/javascript'], '/private.js': ['private.js', 'text/javascript'], '/vendor/nacl.js': ['../node_modules/tweetnacl/nacl-fast.min.js', 'text/javascript'], '/theme.js': ['theme.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'], '/favicon.svg': ['favicon.svg', 'image/svg+xml'] };
       if (req.method === 'GET' && ['/about', '/about/', '/chat'].includes(url.pathname)) { res.writeHead(301, { Location: url.pathname === '/chat' ? '/chat/' : '/' }); res.end(); return; }
       if (req.method !== 'GET' || !files[url.pathname]) fail(404, 'Not found.');
       const [file, type] = files[url.pathname];
@@ -133,13 +140,52 @@ const server = http.createServer(async (req, res) => {
     const token = req.headers.cookie?.split(';').map(x => x.trim()).find(x => x.startsWith('silenza='))?.slice(8);
     if (token && bans.has(hash(token).toString('hex'))) fail(403, 'This anonymous session has been banned.');
     let session = sessions.get(token);
+    const cookie = secret => res.setHeader('Set-Cookie', `silenza=${secret}; HttpOnly; SameSite=Strict; Path=/${process.env.SECURE_COOKIES === 'true' || origin.startsWith('https:') ? '; Secure' : ''}`);
+    if (url.pathname === '/api/auth/status' && req.method === 'GET') { json({ me: session ? publicSession(session) : null }); return; }
+    if (['/api/auth/login', '/api/auth/register'].includes(url.pathname) && req.method === 'POST') {
+      const input = await body(req, 4096);
+      const address = req.socket.remoteAddress;
+      const keys = [`ip:${address}`, `user:${String(input.username).toLowerCase().slice(0, 24)}`];
+      for (const key of keys) {
+        let limit = attempts.get(key);
+        if (!limit || limit.reset <= Date.now()) limit = { count: 0, reset: Date.now() + 600000 };
+        if (!attempts.has(key) && attempts.size >= 10000) fail(429, 'Sign-in is busy. Please try again shortly.');
+        if (limit.count >= (key.startsWith('ip:') ? 100 : 10)) fail(429, 'Too many attempts. Try again in 10 minutes.');
+        limit.count++; attempts.set(key, limit);
+      }
+      if (sessions.size >= 5000) fail(503, 'The chat is full.');
+      if (session?.accountId && url.pathname.endsWith('/register')) fail(409, 'Sign out before creating another account.');
+      const account = url.pathname.endsWith('/register') ? await accounts.create(input.username, input.password) : await accounts.authenticate(input.username, input.password);
+      if ([...bans.values()].some(ban => ban.accountId === account.id)) fail(403, 'This account is banned.');
+      if (session && sessions.get(token) !== session) fail(401, 'Your session changed. Please try again.');
+      if (session?.accountId && session.accountId !== account.id) fail(409, 'Sign out before switching accounts.');
+      if (!session) session = { id: randomUUID(), streams: new Set(), room: rooms[0]?.id, seen: Date.now(), sent: [] };
+      attempts.delete(keys[1]);
+      session.seen = Date.now();
+      session.accountId = account.id; session.alias = account.username; session.displayAsAdmin = false;
+      sessions.delete(token);
+      const secret = randomBytes(32).toString('hex'); sessions.set(secret, session); cookie(secret);
+      publishAppearance(session);
+      for (const stream of session.streams) stream.end();
+      json(publicSession(session)); return;
+    }
+    if (url.pathname === '/api/auth/logout' && req.method === 'POST') {
+      if (session) {
+        sessions.delete(token); groups.removeUser(session.id); attachments.removeUser(session.id);
+        for (const key of histories.keys()) if (key.startsWith('dm:') && key.includes(session.id)) histories.delete(key);
+        for (const stream of session.streams) stream.end();
+        presence(); publishRooms();
+      }
+      res.setHeader('Set-Cookie', 'silenza=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0');
+      json({ ok: true }); return;
+    }
     if (url.pathname === '/api/session' && req.method === 'GET') {
       if (!session) {
         if (sessions.size >= 5000) fail(503, 'The chat is full. Try again shortly.');
         const secret = randomBytes(32).toString('hex');
-        session = { id: randomUUID(), alias: `${adjectives[Math.floor(Math.random()*adjectives.length)]} ${animals[Math.floor(Math.random()*animals.length)]} ${randomBytes(2).toString('hex')}`, streams: new Set(), room: rooms[0]?.id, seen: Date.now(), adminUntil: 0, sent: [] };
+        session = { id: randomUUID(), alias: `${adjectives[Math.floor(Math.random()*adjectives.length)]} ${animals[Math.floor(Math.random()*animals.length)]} ${randomBytes(2).toString('hex')}`, streams: new Set(), room: rooms[0]?.id, seen: Date.now(), sent: [] };
         sessions.set(secret, session);
-        res.setHeader('Set-Cookie', `silenza=${secret}; HttpOnly; SameSite=Strict; Path=/${process.env.SECURE_COOKIES === 'true' ? '; Secure' : ''}`);
+        cookie(secret);
       }
       session.seen = Date.now();
       const conversations = [...sessions.values()].filter(s => s.id !== session.id && histories.has(keyFor(session, null, s.id))).map(safeUser);
@@ -199,21 +245,19 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/history' && req.method === 'GET') {
       const peer = url.searchParams.get('peer'), room = url.searchParams.get('room');
       if (peer ? ![...sessions.values()].some(s => s.id === peer) : !rooms.some(r => r.id === room)) fail(404, 'Conversation is no longer available.');
-      const users = new Map([...sessions.values()].map(s => [s.id, s]));
-      json((histories.get(keyFor(session, room, peer)) || []).map(message => ({
-        ...message, displayAsAdmin: displaysAsAdmin(users.get(message.sender) || {})
-      }))); return;
+      json(histories.get(keyFor(session, room, peer)) || []); return;
     }
     if (url.pathname === '/api/admin/feedback' && req.method === 'GET') {
-      if (session.adminUntil <= Date.now()) fail(403, 'Unlock admin controls first.');
+      if (!isAdmin(session)) fail(403, 'Unlock admin controls first.');
       json(feedback); return;
     }
     if (url.pathname === '/api/admin/state' && req.method === 'GET') {
-      if (session.adminUntil <= Date.now()) fail(403, 'Unlock admin controls first.');
+      if (!isAdmin(session)) fail(403, 'Unlock admin controls first.');
       json({ people: [...sessions.values()].filter(online).map(safeUser), bans: [...bans.values()].map(({ id, alias, bannedAt }) => ({ id, alias, bannedAt })), groups: groups.moderate('list', session) }); return;
     }
     if (req.method !== 'POST') fail(404, 'Not found.');
     const input = await body(req);
+    if (sessions.get(token) !== session) fail(401, 'Your session has ended.');
     if (url.pathname === '/api/feedback') {
       if (sessions.get(token) !== session) fail(403, 'This session is no longer available.');
       const title = typeof input.title === 'string' ? input.title.trim() : '';
@@ -268,8 +312,8 @@ const server = http.createServer(async (req, res) => {
         for (const reply of history) if (reply.reply?.id === message.id) reply.reply.text = text.slice(0, 200);
       }
       message.editVersion = input.editVersion; message.editedAt = new Date().toISOString();
-      message.displayAsAdmin = displaysAsAdmin(session); session.sent.push(Date.now());
-      if (message.room) broadcast('message-edited', message);
+      session.sent.push(Date.now());
+      if (message.room) { broadcast('message-edited', message); publishRooms(); }
       else for (const person of sessions.values()) if ([message.sender, message.recipient].includes(person.id)) emit(person, 'message-edited', message);
       json(message); return;
     }
@@ -316,22 +360,10 @@ const server = http.createServer(async (req, res) => {
         reply: original ? { id: original.id, alias: original.alias, text: original.text.slice(0, 200) } : null };
       histories.set(key, [...(histories.get(key) || []), message].slice(-100));
       if (peer) { emit(session, 'message', message); emit(peer, 'message', message); }
-      else broadcast('message', message);
+      else { broadcast('message', message); publishRooms(); }
       json(message); return;
     }
-    if (url.pathname === '/api/admin/login') {
-      const address = req.socket.remoteAddress;
-      const limit = attempts.get(address) || { count: 0, reset: Date.now() + 600000 };
-      if (Date.now() > limit.reset) { limit.count = 0; limit.reset = Date.now() + 600000; }
-      if (limit.count >= 5) fail(429, 'Too many attempts. Try again in 10 minutes.');
-      limit.count++; attempts.set(address, limit);
-      if (typeof input.password !== 'string' || !timingSafeEqual(hash(input.password), hash(password))) fail(403, 'Incorrect admin password.');
-      if (session.adminUntil <= Date.now()) session.displayAsAdmin = false;
-      attempts.delete(address); session.adminUntil = Date.now() + 3600000;
-      emit(session, 'session', publicSession(session)); json(publicSession(session)); return;
-    }
-    if (url.pathname === '/api/admin/logout') { session.adminUntil = 0; session.displayAsAdmin = false; publishAppearance(session); json(publicSession(session)); return; }
-    if (url.pathname.startsWith('/api/admin/') && session.adminUntil <= Date.now()) fail(403, 'Unlock admin controls first.');
+    if (url.pathname.startsWith('/api/admin/') && !isAdmin(session)) fail(403, 'Unlock admin controls first.');
     if (url.pathname === '/api/admin/groups/update' || url.pathname === '/api/admin/groups/delete') {
       json(groups.moderate(url.pathname.split('/').pop(), session, input)); return;
     }
@@ -371,13 +403,15 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/admin/ban') {
       const target = [...sessions.entries()].find(([, s]) => s.id === input.id);
       if (!target) fail(404, 'That person is no longer available.');
-      if (target[1].id === session.id) fail(400, 'You cannot ban your own session.');
+      if (target[1].id === session.id || (session.accountId && target[1].accountId === session.accountId)) fail(400, 'You cannot ban your own session.');
       const [targetToken, person] = target;
       const key = hash(targetToken).toString('hex');
-      bans.set(key, { key, id: person.id, alias: person.alias, bannedAt: new Date().toISOString() });
+      bans.set(key, { key, id: person.id, alias: person.alias, accountId: person.accountId, bannedAt: new Date().toISOString() });
       try { await saveBans(); } catch (error) { bans.delete(key); throw error; }
       for (const stream of person.streams) stream.end();
-      sessions.delete(targetToken); groups.removeUser(person.id); attachments.removeUser(person.id); presence(); publishRooms(); broadcast('moderation', {});
+      for (const [secret, s] of sessions) if (secret === targetToken || (person.accountId && s.accountId === person.accountId)) {
+        sessions.delete(secret); groups.removeUser(s.id); attachments.removeUser(s.id); for (const stream of s.streams) stream.end();
+      } presence(); publishRooms(); broadcast('moderation', {});
       json({ ok: true }); return;
     }
     if (url.pathname === '/api/admin/unban') {
@@ -401,7 +435,7 @@ const server = http.createServer(async (req, res) => {
       for (const message of remaining) if (message.reply?.id === found.id) message.reply = { id: found.id, removed: true };
       histories.set(conversation, remaining);
       const removed = { id: found.id, room: found.room, sender: found.sender, recipient: found.recipient };
-      if (found.room) broadcast('message-removed', removed);
+      if (found.room) { broadcast('message-removed', removed); publishRooms(); }
       else for (const s of sessions.values()) if (s.id === found.sender || s.id === found.recipient) emit(s, 'message-removed', removed);
       json(removed); return;
     }
@@ -409,10 +443,7 @@ const server = http.createServer(async (req, res) => {
   } catch (error) { if (!res.headersSent) json({ error: error.status ? error.message : 'Something went wrong. Please try again.' }, error.status || 500); else res.end(); }
 });
 setInterval(() => {
-  for (const s of sessions.values()) if (s.adminUntil && s.adminUntil <= Date.now()) {
-    s.adminUntil = 0; s.displayAsAdmin = false;
-    publishAppearance(s);
-  }
+
   for (const [token, s] of sessions) if (!online(s) && Date.now() - s.seen > 86400000) {
     sessions.delete(token); groups.removeUser(s.id); attachments.removeUser(s.id); for (const key of histories.keys()) if (key.startsWith('dm:') && key.includes(s.id)) histories.delete(key);
   }
@@ -422,5 +453,4 @@ setInterval(() => {
 }, 60000).unref();
 server.listen(Number(process.env.PORT || 3000), process.env.HOST || '127.0.0.1', () => {
   console.log(`SilenzaChat is running at ${process.env.ORIGIN || `http://localhost:${process.env.PORT || 3000}`}`);
-  if (!process.env.ADMIN_PASSWORD) console.log(`Temporary admin password: ${password}`);
 });

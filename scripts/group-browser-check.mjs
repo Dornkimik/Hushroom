@@ -1,3 +1,4 @@
+import { enterGuest, enterAccount, signOut } from './auth-browser-helper.mjs';
 import { chromium } from 'playwright';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
@@ -14,7 +15,7 @@ const data = await mkdtemp(path.join(tmpdir(), 'silenzachat-groups-'));
 const probe = net.createServer(); probe.listen(0, '127.0.0.1'); await once(probe, 'listening');
 const port = probe.address().port; await new Promise(resolve => probe.close(resolve));
 const origin = `http://127.0.0.1:${port}`;
-const server = spawn(process.execPath, ['server.mjs'], { cwd: root, env: { ...process.env, DATA_DIR: data, PORT: String(port), HOST: '127.0.0.1', ORIGIN: origin, ADMIN_PASSWORD: 'groups-browser-test' }, stdio: ['ignore', 'pipe', 'pipe'] });
+const server = spawn(process.execPath, ['server.mjs'], { cwd: root, env: { ...process.env, DATA_DIR: data, PORT: String(port), HOST: '127.0.0.1', ORIGIN: origin, ADMIN_USERNAME: 'host', ADMIN_PASSWORD: 'groups-browser-test' }, stdio: ['ignore', 'pipe', 'pipe'] });
 let browser; const errors = [], sent = [];
 const api = (page, route, body) => page.evaluate(async ({ route, body }) => {
   const response = await fetch(`/api/${route}`, body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -32,7 +33,8 @@ try {
     page.on('pageerror', e => errors.push(e.message)); page.on('dialog', dialog => dialog.accept());
     page.on('request', request => { if (request.url().endsWith('/api/groups/message') && request.method() === 'POST') sent.push(request.postDataJSON()); });
   }
-  await Promise.all([a,b,c].map(page => page.goto(`${origin}/chat/`)));
+  await enterAccount(c, origin, 'groups-browser-test');
+  await Promise.all([a,b].map(page => enterGuest(page, origin)));
   for (const page of [a,b,c]) await page.waitForFunction(() => document.querySelector('#connection').textContent === 'Connected');
   const [ua, ub, uc] = await Promise.all([a,b,c].map(async page => (await api(page, 'session')).data.me));
   await a.locator('#create-group').click(); await a.locator('#group-name').fill('Evening circle');
@@ -158,8 +160,6 @@ try {
   const moderated = (await api(a, 'groups/create', { name: 'Private moderation test', access: 'invite' })).data;
   await a.locator('#groups .group-room').filter({ hasText: 'Private moderation test' }).click();
   await c.locator('#open-admin').click();
-  await c.locator('#admin-password').fill('groups-browser-test');
-  await c.locator('#admin-login button').click();
   const adminRow = c.locator('#admin-groups .admin-room');
   await adminRow.filter({ hasText: 'Private moderation test' }).getByRole('button', { name: 'Edit', exact: true }).click();
   await c.locator('#moderate-group-name').fill('Moderated by admin');
@@ -181,8 +181,7 @@ try {
   await c.locator('#confirm-delete').click();
   await a.locator('#groups .group-room').waitFor({ state: 'detached' });
   assert.equal((await api(a, `groups/history?group=${moderated.id}`)).status, 404);
-  await c.locator('#admin-logout').click();
-  assert.equal(await c.locator('#admin-groups .admin-room').count(), 0);
+  await signOut(c, origin);
   assert.deepEqual(errors, []);
   const auditedImages = (await imageAuditA.verify(Buffer.from(image, 'base64'), 'secret-group-image.png')) + (await imageAuditB.verify(Buffer.from(image, 'base64'), 'secret-group-image.png'));
   console.log(`PASS: ${auditedImages} group image uploads contain exact ciphertext; server returns unchanged ciphertext; no image plaintext or secret keys in captured requests`);

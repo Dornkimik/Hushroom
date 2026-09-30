@@ -16,7 +16,7 @@ test('own message edits enforce authorization, validation, encryption and confli
   const origin = `http://127.0.0.1:${port}`;
   let child; const streams = [];
   async function boot() {
-    child = spawn(process.execPath, ['server.mjs'], { cwd: new URL('..', import.meta.url), env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', DATA_DIR: data, ADMIN_PASSWORD: 'integration-test-password', ORIGIN: origin }, stdio: ['ignore', 'pipe', 'pipe'] });
+    child = spawn(process.execPath, ['server.mjs'], { cwd: new URL('..', import.meta.url), env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', DATA_DIR: data, ADMIN_USERNAME: 'host', ADMIN_PASSWORD: 'integration-test-password', ORIGIN: origin }, stdio: ['ignore', 'pipe', 'pipe'] });
     await new Promise((resolve, reject) => { const timer = setTimeout(() => reject(new Error('Server startup timed out')), 10000); child.stdout.once('data', () => { clearTimeout(timer); resolve(); }); child.once('error', reject); child.once('exit', code => { clearTimeout(timer); reject(new Error(`Server exited: ${code}`)); }); });
   }
   async function stop() { if (child && child.exitCode === null) { const exit = once(child, 'exit'); child.kill(); await exit; } }
@@ -34,6 +34,7 @@ test('own message edits enforce authorization, validation, encryption and confli
   const decrypt = (message, user, peer) => encryption.decryptMessage(message, user.me.id, user.identity, encryption.base64(peer.identity.publicKey));
   async function request(user, route, body, source = origin) {
     const res = await fetch(`${origin}/api/${route}`, { method: body === undefined ? 'GET' : 'POST', headers: { cookie: user.cookie, Origin: source, 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+    if (res.headers.get('set-cookie')) user.cookie = res.headers.get('set-cookie').split(';')[0];
     return { status: res.status, data: await res.json() };
   }
   async function events(user) {
@@ -51,7 +52,7 @@ test('own message edits enforce authorization, validation, encryption and confli
     const reply = (await request(b, 'message', { room, text: 'Reply', replyTo: message.id })).data;
     const edit = { id: message.id, text: `After @${b.me.alias}`, editVersion: 1 };
     assert.equal((await request(b, 'message/edit', edit)).status, 404);
-    await request(c, 'admin/login', { password: 'integration-test-password' });
+    await request(c, 'auth/login', { username: 'host', password: 'integration-test-password' });
     assert.equal((await request(c, 'message/edit', edit)).status, 404);
     for (const text of ['', '  ', 'x'.repeat(2001)]) assert.equal((await request(a, 'message/edit', { ...edit, text })).status, 400);
     assert.equal((await request(a, 'message/edit', { ...edit, room: 'different' })).status, 400);

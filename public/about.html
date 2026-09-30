@@ -9,20 +9,35 @@
   <meta name="twitter:card" content="summary">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/about.css">
   <script src="/theme.js"></script>
-  <script src="/feedback.js" defer></script>
+  <script src="/feedback.js" defer></script><script src="/auth.js" defer></script>
 </head>
 <body class="about-page">
   <div class="about-shell">
     <header class="about-header">
       <a class="brand" href="/" aria-label="SilenzaChat home"><span class="brand-icon">s<span>+</span></span>silenza<span class="brand-dot">chat</span></a>
-      <div class="about-header-actions"><button class="about-cta" type="button" data-feedback aria-haspopup="dialog" aria-controls="feedback-dialog">Feedback</button><a class="about-cta" href="/chat/">Connect <span aria-hidden="true">↗</span></a></div>
+      <div class="about-header-actions"><button class="about-cta" type="button" data-feedback aria-haspopup="dialog" aria-controls="feedback-dialog">Feedback</button><a class="about-cta" href="#entry">Connect <span aria-hidden="true">↗</span></a></div>
     </header>
     <main class="about-main">
       <p class="about-eyebrow">A QUIETER PLACE TO TALK</p>
       <h1>Anonymous chat with no registration</h1>
       <p class="about-lead">Open SilenzaChat, get a random alias, and start talking. You do not need to create an account, provide an email address, or use your real name. Join a public room, choose someone online for a private conversation, or make a temporary room for a group.</p>
-      <a class="about-cta about-primary" href="/chat/">Connect to chat <span aria-hidden="true">↗</span></a>
+      <a class="about-cta about-primary" href="#entry">Connect to chat <span aria-hidden="true">↗</span></a>
 
+      <section id="entry" aria-labelledby="entry-title">
+        <h2 id="entry-title">How would you like to join?</h2>
+        <p>Drop in with a random guest name, or keep a username with an account. No email required.</p>
+        <button id="guest-enter" class="about-cta about-primary" type="button">Continue as guest</button>
+        <a id="continue-account" class="about-cta" href="/chat/" hidden>Continue to chat</a>
+        <button id="entry-signout" class="text-button" type="button" hidden>Sign out to choose another identity</button>
+        <form id="account-form" class="account-form">
+          <label for="account-mode">Account</label><select id="account-mode" name="mode"><option value="login">Log in</option><option value="register">Create account</option></select>
+          <label for="account-username">Username</label><input id="account-username" name="username" autocomplete="username" pattern="[a-zA-Z0-9_]{3,24}" minlength="3" maxlength="24" required aria-describedby="account-hint">
+          <label for="account-password">Password</label><input id="account-password" name="password" type="password" autocomplete="current-password" maxlength="128" required aria-describedby="account-hint">
+          <p id="account-hint">Usernames: 3–24 letters, numbers or underscores. New passwords: 15–128 characters. Keep your password safe: there is no email recovery. Accounts keep your username, not your chat history or encryption keys.</p>
+          <button id="account-submit" class="about-cta about-primary" type="submit">Log in &amp; enter</button>
+        </form>
+        <p id="account-error" role="alert"></p>
+      </section>
       <section aria-labelledby="rooms-title">
         <h2 id="rooms-title">Choose the room that fits</h2>
         <div class="about-cards">
@@ -35,7 +50,7 @@
       <section aria-labelledby="start-title">
         <h2 id="start-title">How to start an anonymous chat</h2>
         <ol class="about-steps">
-          <li><strong>Open the chat.</strong> SilenzaChat gives your browser a random alias automatically.</li>
+          <li><strong>Open the chat.</strong> Choose a random guest alias or log in with a username and password.</li>
           <li><strong>Pick a conversation.</strong> Enter a public room, select someone online for a private chat, or create a temporary room.</li>
           <li><strong>Check before sharing.</strong> Public rooms are visible to others. For private chats, check the encryption status and compare verification codes through another trusted channel if you need to confirm a contact’s key.</li>
         </ol>
@@ -51,10 +66,10 @@
       <section class="about-last" aria-labelledby="more-title">
         <h2 id="more-title">Want the details?</h2>
         <p>The chat includes a privacy and security FAQ covering encryption, images, identity checks, and retention. You can also inspect the <a href="https://github.com/Dornkimik/SilenzaChat" rel="noopener noreferrer">open-source code on GitHub</a>.</p>
-        <a class="about-cta about-primary" href="/chat/">Connect to chat <span aria-hidden="true">↗</span></a>
+        <a class="about-cta about-primary" href="#entry">Connect to chat <span aria-hidden="true">↗</span></a>
       </section>
     </main>
-    <footer class="about-footer"><a href="/chat/">Chat</a><a href="/" aria-current="page">How it works</a></footer>
+    <footer class="about-footer"><a href="#entry">Chat</a><a href="/" aria-current="page">How it works</a></footer>
   </div>
 </body>
 </html>

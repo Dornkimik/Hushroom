@@ -54,7 +54,7 @@ Only the latest 100 messages in a conversation are kept in server memory. Messag
 
 Your browser stores a session cookie, encryption keys, remembered peer identities, and your theme preference. Decrypted messages and unsent drafts stay in the current page’s memory; SilenzaChat does not save a permanent local chat archive.
 
-Refreshing normally keeps your session and keys, and tabs in the same browser profile share them. Another browser, profile, or device has a separate identity; there is no account sync. Clearing site data or ending an incognito session can erase your session and keys. The server cannot recover lost keys. If the session remains but its key is lost, private chat is blocked; clear the site’s data to start a new anonymous session.
+Refreshing normally keeps your session and keys, and tabs in the same browser profile share them. Another browser, profile, or device has a separate identity; you can reuse an account username, but messages, memberships, and encryption keys do not sync. Clearing site data or ending an incognito session can erase your session and keys. The server cannot recover lost keys. If the session remains but its key is lost, private chat is blocked; clear the site’s data to start a new anonymous session.
 
 ### Security limits
 
@@ -96,17 +96,21 @@ Open **http://localhost:3000** and keep the terminal running. You can also open 
 
 ### Admin access
 
-The included local copy has a generated admin password in `.env`, on the `ADMIN_PASSWORD=` line. Enter it under **Room management** in the website. Visitors never need a password. If `.env` is absent, the terminal prints a temporary admin password.
+Visitors choose a random guest name or a persistent username/password account on the landing page. Accounts require no email. Passwords must be 15-128 characters; there is no password recovery. Accounts persist in `accounts.json` in the configured data directory. Messages, private encryption keys, and temporary-room memberships do not sync between devices or logins.
 
-For a permanent password, copy `.env.example` to `.env`, set `ADMIN_PASSWORD` to a long, unique value, and restart the server. Keep `.env` private. Admin access expires after one hour; **Lock admin controls** ends it immediately. Under **User-created rooms**, admins can edit the name, description, rules, and access setting of any temporary room, including invite-only rooms, or remove it with confirmation. Changes reach members immediately; deletion removes room history and stored images. These controls do not join the admin to the room or grant access to encrypted messages. Hosts can also manage public rooms, ban or unban an active anonymous session, and remove messages. Session bans survive restarts in `data/bans.json`; clearing browser cookies creates a new session and is not prevented by a session ban.
+Before the first account is created, set `ADMIN_USERNAME` and `ADMIN_PASSWORD` (15-128 characters), then start the server. This creates a persistent account with the admin role. Log in on the landing page with those credentials. Remove the bootstrap environment credentials afterward; the password hash and role are saved. Existing accounts are never automatically promoted by a matching environment username. Existing installations must configure both values before enabling registration; the old admin code no longer works.
+
+Admins manage rooms, feedback, and bans from Room management. Their permissions last for their signed-in session, without a one-hour timer. Sign out from Sound & account settings. The optional admin badge is recorded when a message is sent and remains on that message after the sender hides their badge, signs out, or disconnects. Account bans block future logins and all current sessions of that account; guest bans still apply only to that session. Admin access does not decrypt private chats or grant temporary-room membership.
+
+Sound & account settings offers separate, optional sounds for private chats, temporary groups, and main rooms. Preferences stay in the browser; browsers may require Test sound after reopening the page. Public-room sidebar previews update after sends, edits, and deletions.
 
 ### Deploy
 
-Deploy the full project to a host that can run a long-lived Node.js process; static-only hosting cannot run the chat server. Set `HOST=0.0.0.0`, `PORT` to the host's assigned port, a strong `ADMIN_PASSWORD`, `ORIGIN` to the exact public HTTPS origin with no trailing slash, and `SECURE_COOKIES=true`.
+Deploy the full project to a host that can run a long-lived Node.js process; static-only hosting cannot run the chat server. Set `HOST=0.0.0.0`, `PORT` to the host's assigned port, an initial `ADMIN_USERNAME` and strong `ADMIN_PASSWORD`, `ORIGIN` to the exact public HTTPS origin with no trailing slash, and `SECURE_COOKIES=true`.
 
 On Railway, attach a **Volume** to the SilenzaChat service and mount it at **`/data`**. Leave `DATA_DIR` unset: the app automatically uses Railway's `RAILWAY_VOLUME_MOUNT_PATH`. If you already set `DATA_DIR`, remove it or point it inside the mounted volume (for example `/data`). Redeploy after attaching the volume. [Railway volume setup](https://docs.railway.com/volumes).
 
-Main/public rooms created under Room management are saved in `rooms.json` on that volume. Their IDs, names, descriptions, and deletions survive restarts and new deployments. The three starter rooms are seeded only when no saved room file exists; deleting all main rooms keeps the list empty after restart. Bans and feedback use the same storage. Message history and user-created temporary rooms still live only in memory.
+Main/public rooms created under Room management are saved in `rooms.json` on that volume. Their IDs, names, descriptions, and deletions survive restarts and new deployments. The three starter rooms are seeded only when no saved room file exists; deleting all main rooms keeps the list empty after restart. Accounts, bans, and feedback use the same storage. Message history and user-created temporary rooms still live only in memory.
 
 If you currently have rooms you want to keep on an ephemeral deployment, copy its `rooms.json` into the volume before starting the new deployment. Data already lost in an earlier deployment cannot be recovered by this change. Keep the volume attached to the same service and use one replica. The app logs a storage warning on Railway if the selected data directory is outside the attached volume.
 
@@ -128,6 +132,6 @@ For browser tests, install dependencies with `npm ci`, install Chromium with `np
 
 ### Editing messages
 
-Choose **Edit** on your own message to change its text or image caption, then **Save changes**. Cancel keeps the original message and your unsent draft. Edited messages show an **(edited)** label and update for other participants, including reply previews. Attached images stay unchanged. Only the sender can edit; admin and room-owner roles do not grant permission to edit other people�s messages.
+Choose **Edit** on your own message to change its text or image caption, then **Save changes**. Cancel keeps the original message and your unsent draft. Edited messages show an **(edited)** label and update for other participants, including reply previews. Attached images stay unchanged. Only the sender can edit; admin and room-owner roles do not grant permission to edit other people�s messages.
 
 Private and temporary-room edits remain end-to-end encrypted. An older room message is updated only for original recipients who still have access; later members cannot see it. Deleted or expired messages cannot be edited. Concurrent edits are rejected so you can reopen the latest version. Sending and editing share the existing rate limit. Run `npm run test:editing:browser` for browser coverage.
