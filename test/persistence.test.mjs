@@ -40,19 +40,19 @@ test('Railway volume keeps main rooms and deletions across deployments, includin
     assert.equal((await saved()).length, 3);
     await post('auth/login', { username: 'host', password: 'persistent-test' });
     const created = await post('admin/create', { name: 'Permanent community', description: 'Survives deployment' });
-    for (const room of first.rooms) await post('admin/delete', { id: room.id });
+    for (const room of first.rooms.filter(r => !r.persistent)) await post('admin/delete', { id: room.id });
     await stop();
     const restarted = await boot();
-    assert.deepEqual(restarted.rooms.map(({ count, preview, ...room }) => room), [created]);
+    assert.deepEqual(restarted.rooms.filter(r => !r.persistent).map(({ count, preview, ...room }) => room), [created]);
     assert.deepEqual(await saved(), [created]);
     await post('auth/login', { username: 'host', password: 'persistent-test' });
     await post('admin/delete', { id: created.id });
     await stop();
-    assert.deepEqual((await boot()).rooms, []); assert.deepEqual(await saved(), []);
+    assert.deepEqual((await boot()).rooms.filter(r => !r.persistent), []); assert.deepEqual(await saved(), []);
     await stop();
     // Explicit DATA_DIR still wins and works in a subdirectory of the volume.
     const nested = path.join(volume, 'custom');
-    assert.equal((await boot({ DATA_DIR: nested })).rooms.length, 3); assert.equal(warnings, '');
+    assert.equal((await boot({ DATA_DIR: nested })).rooms.filter(r => !r.persistent).length, 3); assert.equal(warnings, '');
     assert.equal(JSON.parse(await readFile(path.join(nested, 'rooms.json'), 'utf8')).length, 3);
     assert.deepEqual(await saved(), []);
     await stop();

@@ -480,3 +480,11 @@ dialog input, #emoji-search { border-radius: 7px; background: var(--side); }
 .sound-choice { display: flex; gap: 10px; align-items: center; margin: 16px 0; }
 .sound-choice input { width: auto; margin: 0; }
 #emoji-grid button, #emoji-toggle { font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif; font-variant-emoji: emoji; }
+
+#announcements { margin-bottom: 20px; }
+#announcement-note { margin: 0 0 12px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.announcements-readonly .composer-caption { display: none; }
+@media (max-width: 600px) {
+  .section-label.updates-label, .section-label.main-rooms-label { display: flex; margin: 16px 0 8px; }
+  #rooms { margin-top: 0; }
+}

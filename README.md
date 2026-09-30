@@ -48,7 +48,7 @@ Images can be sent in private chats and temporary encrypted rooms. Your browser 
 
 Metadata removal cannot hide details visible in the picture, and the recipient can save or share a decrypted copy. Choose **Delete** on your own public or private message to remove it for everyone, including an attached image. Deletion cannot remove screenshots, downloads, or copies someone has already made.
 
-Only the latest 100 messages in a conversation are kept in server memory. Messages disappear when the server restarts; private histories and sessions expire after 24 hours offline. Images expire within 24 hours of upload, or sooner if the host configures a shorter period. They can also disappear when their message is deleted or leaves recent history, a participant is banned or their session expires, or the server restarts. This is a temporary chat, not a permanent inbox or backup.
+Announcements are retained on disk until an admin deletes them. In other conversations, only the latest 100 messages are kept in server memory. Messages disappear when the server restarts; private histories and sessions expire after 24 hours offline. Images expire within 24 hours of upload, or sooner if the host configures a shorter period. They can also disappear when their message is deleted or leaves recent history, a participant is banned or their session expires, or the server restarts. This is a temporary chat, not a permanent inbox or backup.
 
 ### Your browser identity
 
@@ -135,3 +135,9 @@ For browser tests, install dependencies with `npm ci`, install Chromium with `np
 Choose **Edit** on your own message to change its text or image caption, then **Save changes**. Cancel keeps the original message and your unsent draft. Edited messages show an **(edited)** label and update for other participants, including reply previews. Attached images stay unchanged. Only the sender can edit; admin and room-owner roles do not grant permission to edit other people�s messages.
 
 Private and temporary-room edits remain end-to-end encrypted. An older room message is updated only for original recipients who still have access; later members cannot see it. Deleted or expired messages cannot be edited. Concurrent edits are rejected so you can reopen the latest version. Sending and editing share the existing rate limit. Run `npm run test:editing:browser` for browser coverage.
+
+### Announcements
+
+Announcements appears in its own **Community updates** sidebar section, separate from public and temporary rooms. All visitors can read it. Only account admins can publish, edit, or remove announcements, including posts from earlier sessions or other admins. Announcement posts always carry the admin badge. The room itself cannot be deleted.
+
+Posts, edits, reply updates, and deletions are atomically saved in `announcements.json` under `DATA_DIR` (or the Railway volume). A successful response and live update are sent only after saving succeeds. Announcements are not subject to the temporary chat’s 100-message limit. They are public plaintext with author names and timestamps; private chat retention is unchanged. Use a persistent volume to keep announcements across deployments, and back up the data directory.

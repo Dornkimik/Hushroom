@@ -7,6 +7,7 @@ import nacl from 'tweetnacl';
 import { Attachments } from './lib/attachments.mjs';
 import { Groups } from './lib/groups.mjs';
 import { Accounts } from './lib/accounts.mjs';
+import { Announcements, announcementRoom } from './lib/announcements.mjs';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const dataDir = path.resolve(process.env.DATA_DIR || process.env.RAILWAY_VOLUME_MOUNT_PATH || path.join(root, 'data'));
@@ -39,6 +40,9 @@ const attachmentTTL = Number(process.env.ATTACHMENT_TTL_SECONDS || 86400) * 1000
 if (!Number.isFinite(attachmentTTL) || attachmentTTL < 1000 || attachmentTTL > 86400000) throw new Error('ATTACHMENT_TTL_SECONDS must be between 1 and 86400.');
 const attachments = new Attachments({ ttl: attachmentTTL });
 const sessions = new Map(), histories = new Map(), attempts = new Map();
+const announcements = new Announcements(dataDir);
+await announcements.load();
+const allRooms = () => [...rooms, announcementRoom];
 const accounts = new Accounts(dataDir);
 await accounts.load();
 // Bootstrap only a new installation. Never promote an existing user by name.
@@ -70,7 +74,7 @@ function onlinePeople(viewer) {
   return [...people.values()].map(safeUser);
 }
 const presence = () => { for (const session of sessions.values()) if (online(session)) emit(session, 'people', onlinePeople(session)); };
-const roomList = () => rooms.map(r => ({ ...r, preview: (histories.get(`room:${r.id}`) || []).at(-1)?.text?.slice(0, 100) || '', count: new Set([...sessions.values()].filter(s => online(s) && s.room === r.id).map(presenceKey)).size }));
+const roomList = () => allRooms().map(r => ({ ...r, preview: (r.persistent ? announcements.messages : histories.get(`room:${r.id}`) || []).at(-1)?.text?.slice(0, 100) || '', count: new Set([...sessions.values()].filter(s => online(s) && s.room === r.id).map(presenceKey)).size }));
 const publishRooms = () => broadcast('rooms', roomList());
 const publicSession = s => ({ ...safeUser(s), admin: isAdmin(s), account: Boolean(s.accountId) });
 const publishAppearance = s => { emit(s, 'session', publicSession(s)); broadcast('appearance', safeUser(s)); presence(); };
@@ -256,8 +260,8 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === '/api/history' && req.method === 'GET') {
       const peer = url.searchParams.get('peer'), room = url.searchParams.get('room');
-      if (peer ? ![...sessions.values()].some(s => s.id === peer) : !rooms.some(r => r.id === room)) fail(404, 'Conversation is no longer available.');
-      json(histories.get(keyFor(session, room, peer)) || []); return;
+      if (peer ? ![...sessions.values()].some(s => s.id === peer) : !allRooms().some(r => r.id === room)) fail(404, 'Conversation is no longer available.');
+      json(!peer && room === announcementRoom.id ? announcements.messages : histories.get(keyFor(session, room, peer)) || []); return;
     }
     if (url.pathname === '/api/admin/feedback' && req.method === 'GET') {
       if (!isAdmin(session)) fail(403, 'Unlock admin controls first.');
@@ -296,8 +300,48 @@ const server = http.createServer(async (req, res) => {
       json({ ok: true }); return;
     }
     if (url.pathname === '/api/join') {
-      if (!rooms.some(r => r.id === input.room)) fail(404, 'Room no longer exists.');
+      if (!allRooms().some(r => r.id === input.room)) fail(404, 'Room no longer exists.');
       session.room = input.room; publishRooms(); json({ ok: true }); return;
+    }
+    const announcementSend = url.pathname === '/api/message' && !input.peer && input.room === announcementRoom.id;
+    const announcementEdit = url.pathname === '/api/message/edit';
+    const announcementDelete = ['/api/message/delete', '/api/admin/remove-message'].includes(url.pathname);
+    if (announcementSend || ((announcementEdit || announcementDelete) && announcements.messages.some(m => m.id === input.id))) {
+      if (!isAdmin(session)) fail(403, 'Only admins can post or change announcements.');
+      if (!announcementDelete) {
+        session.sent = session.sent.filter(t => Date.now() - t < 10000);
+        if (session.sent.length >= 8) fail(429, 'Take a breath. Try again in a few seconds.');
+      }
+      const allowed = announcementSend ? ['room', 'text', 'replyTo'] : announcementEdit ? ['id', 'text', 'editVersion'] : ['id'];
+      if (Object.keys(input).some(key => !allowed.includes(key))) fail(400, 'Invalid announcement.');
+      const text = typeof input.text === 'string' ? input.text.trim() : '';
+      if (!announcementDelete && (!text || text.length > 2000)) fail(400, 'Use between 1 and 2,000 characters.');
+      if (!announcementDelete) session.sent.push(Date.now());
+      const result = await announcements.update(items => {
+        if (sessions.get(token) !== session || !isAdmin(session)) fail(403, 'Your admin session has ended.');
+        if (announcementSend) {
+          const original = input.replyTo == null ? null : items.find(m => m.id === input.replyTo);
+          if (input.replyTo != null && !original) fail(400, 'That announcement is no longer available.');
+          const message = { id: randomUUID(), sender: session.id, alias: session.alias, displayAsAdmin: true,
+            text, time: new Date().toISOString(), room: announcementRoom.id, recipient: null, mentions: [],
+            reply: original ? { id: original.id, alias: original.alias, text: original.text.slice(0, 200) } : null };
+          items.push(message); return message;
+        }
+        const index = items.findIndex(m => m.id === input.id);
+        if (index < 0) fail(404, 'That announcement is no longer available.');
+        const message = items[index];
+        if (announcementEdit) {
+          if (input.editVersion !== (message.editVersion || 0) + 1) fail(409, 'This announcement changed. Reopen the editor and try again.');
+          message.text = text; message.editVersion = input.editVersion; message.editedAt = new Date().toISOString();
+          for (const reply of items) if (reply.reply?.id === message.id) reply.reply.text = text.slice(0, 200);
+          return message;
+        }
+        items.splice(index, 1);
+        for (const reply of items) if (reply.reply?.id === message.id) reply.reply = { id: message.id, removed: true };
+        return { id: message.id, room: message.room, sender: message.sender, recipient: null };
+      });
+      broadcast(announcementSend ? 'message' : announcementEdit ? 'message-edited' : 'message-removed', result);
+      publishRooms(); json(result); return;
     }
     if (url.pathname === '/api/message/edit') {
       if (sessions.get(token) !== session) fail(403, 'This session is no longer available.');
@@ -362,7 +406,7 @@ const server = http.createServer(async (req, res) => {
       if (!text || text.length > 2000) fail(400, 'Use between 1 and 2,000 characters.');
       const peer = input.peer && [...sessions.values()].find(s => s.id === input.peer);
       if (input.peer && (!peer || peer.id === session.id)) fail(404, 'That person is no longer available.');
-      if (!input.peer && !rooms.some(r => r.id === input.room)) fail(404, 'Room no longer exists.');
+      if (!input.peer && !allRooms().some(r => r.id === input.room)) fail(404, 'Room no longer exists.');
       const key = keyFor(session, input.room, peer?.id);
       const original = input.replyTo == null ? null : (histories.get(key) || []).find(m => m.id === input.replyTo);
       if (input.replyTo != null && !original) fail(400, 'That reply is no longer available in this conversation.');
@@ -405,6 +449,7 @@ const server = http.createServer(async (req, res) => {
       }); publishRooms(); json(room); return;
     }
     if (url.pathname === '/api/admin/delete') {
+      if (input.id === announcementRoom.id) fail(403, 'The Announcements room cannot be removed.');
       await saveRooms(existing => {
         if (!existing.some(r => r.id === input.id)) fail(404, 'Room no longer exists.');
         return existing.filter(r => r.id !== input.id);

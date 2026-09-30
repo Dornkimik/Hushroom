@@ -21,15 +21,17 @@ function username(alias, className, displayAsAdmin) {
 }
 function avatar(alias, own = false) { return element('span', `avatar${own ? ' me-avatar' : ''}`, alias.split(' ').slice(0,2).map(s => s[0]).join('')); }
 function renderRooms() {
-  $('#room-count').textContent = rooms.length;
-  $('#rooms').replaceChildren(...rooms.map(room => {
+  $('#room-count').textContent = rooms.filter(room => !room.adminOnly).length;
+  const roomButton = room => {
     const button = element('button', `nav-room${current?.room === room.id ? ' active' : ''}`);
     const label = element('span', 'room-label'); label.append(element('span', 'name', room.name), element('small', 'room-preview', room.preview || room.description || 'No messages yet'));
     button.append(element('span', 'hash', '#'), label, element('span', 'count', room.count || 0));
     button.setAttribute('aria-current', current?.room === room.id ? 'true' : 'false');
     button.onclick = () => select({ room: room.id }); return button;
-  }));
-  if (!rooms.length) $('#rooms').append(element('p', 'aside-hint', 'No rooms yet. The host can create one.'));
+  };
+  $('#announcements').replaceChildren(...rooms.filter(room => room.adminOnly).map(roomButton));
+  $('#rooms').replaceChildren(...rooms.filter(room => !room.adminOnly).map(roomButton));
+  if (!rooms.some(room => !room.adminOnly)) $('#rooms').append(element('p', 'aside-hint', 'No rooms yet. The host can create one.'));
   renderAdminRooms();
   renderGroups();
 }
@@ -55,21 +57,24 @@ function renderDMs() {
 function updateHeading() {
   const privateChat = Boolean(current?.peer), groupChat = Boolean(current?.group), room = groupChat ? groupState || groupRooms.find(g => g.id === current.group) : rooms.find(r => r.id === current?.room);
   $('.app').classList.toggle('group-chat', groupChat);
+  $('.app').classList.toggle('announcements-readonly', Boolean(room?.adminOnly && !me.admin));
   $('#room-title').textContent = privateChat ? conversations.get(current.peer) || 'Private conversation' : room?.name || 'A little quiet for now';
   $('#room-description').textContent = privateChat ? 'A conversation just between the two of you.' : room?.description || (groupChat ? '' : 'Choose a room or someone to talk to.');
   $('#room-description').hidden = groupChat && !room?.description;
   $('#room-symbol').textContent = privateChat ? '↗' : '#';
-  $('#conversation-type').textContent = groupChat ? `Temporary room · ${room?.access === 'invite' ? 'Invite only' : 'Open'}${room?.count ? ` · ${room.count} ${room.count === 1 ? 'member' : 'members'}` : ''}` : privateChat ? 'JUST BETWEEN YOU TWO' : 'COME AS YOU ARE';
-  $('#room-badge').textContent = groupChat ? 'ENCRYPTED ROOM' : privateChat ? 'PRIVATE CHAT' : 'OPEN ROOM';
+  $('#conversation-type').textContent = room?.adminOnly ? 'OFFICIAL COMMUNITY UPDATES' : groupChat ? `Temporary room · ${room?.access === 'invite' ? 'Invite only' : 'Open'}${room?.count ? ` · ${room.count} ${room.count === 1 ? 'member' : 'members'}` : ''}` : privateChat ? 'JUST BETWEEN YOU TWO' : 'COME AS YOU ARE';
+  $('#announcement-note').hidden = !room?.adminOnly;
+  $('#announcement-note').textContent = me.admin ? 'Only admins can post here. Announcements are saved until an admin removes them.' : 'Read-only: admins post updates here. Announcements are saved between restarts.';
+  $('#room-badge').textContent = room?.adminOnly ? 'ANNOUNCEMENTS' : groupChat ? 'ENCRYPTED ROOM' : privateChat ? 'PRIVATE CHAT' : 'OPEN ROOM';
   $('#private-note').hidden = !privateChat && !groupChat;
   $('#group-details').hidden = !groupChat;
   $('#group-details').disabled = !groupState;
   $('#room-rules').hidden = !groupChat || !room?.rules;
   $('#room-rules p').textContent = groupChat && room?.rules ? room.rules : '';
-  $('#message').placeholder = groupChat ? 'Message this room…' : privateChat ? 'Say something, just to them…' : 'Leave a little thought…';
+  $('#message').placeholder = room?.adminOnly ? (me.admin ? 'Write an announcement…' : 'Only admins can post announcements') : groupChat ? 'Message this room…' : privateChat ? 'Say something, just to them…' : 'Leave a little thought…';
   updateComposerState();
-  $('#welcome h2').textContent = privateChat ? 'A little more personal.' : 'Make yourself at home.';
-  $('#welcome p').textContent = privateChat ? 'One conversation. Just the two of you.\nA simple hello is a good place to start.' : 'Join a public room without an account or email. Choose someone online for an encrypted private chat.';
+  $('#welcome h2').textContent = room?.adminOnly ? 'News from the admins.' : privateChat ? 'A little more personal.' : 'Make yourself at home.';
+  $('#welcome p').textContent = room?.adminOnly ? 'Updates, changes, and important information for the community.' : privateChat ? 'One conversation. Just the two of you.\nA simple hello is a good place to start.' : 'Join a public room without an account or email. Choose someone online for an encrypted private chat.';
 }
 function matches(message, target = current) { return target && (target.group ? message.group === target.group : message.group ? false : target.peer ? !message.room && ((message.sender === me.id && message.recipient === target.peer) || (message.sender === target.peer && message.recipient === me.id)) : message.room === target.room); }
 async function select(target) {
@@ -102,7 +107,7 @@ async function select(target) {
     if (target.room) await api('join', target);
     const history = await Promise.all((await api(`${target.group ? 'groups/history' : 'history'}?${new URLSearchParams(target)}`)).map(decodePrivate));
     if (version !== revision) return;
-    messages = [...new Map([...history, ...messages].map(m => [m.id, m])).values()].sort((a,b) => a.time.localeCompare(b.time)).slice(-100);
+    messages = [...new Map([...history, ...messages].map(m => [m.id, m])).values()].sort((a,b) => a.time.localeCompare(b.time)).slice(rooms.find(r => r.id === target.room)?.persistent ? 0 : -100);
     renderMessages();
   } catch (e) { if (version === revision) { error(e.message); if (target.peer || target.group) { peerIdentity = null; groupState = null; updateComposerState(e.message); } } }
 }
@@ -113,14 +118,14 @@ function renderMessages() {
     const displayAsAdmin = message.displayAsAdmin;
     meta.append(username(message.alias, 'message-name', displayAsAdmin));
     if (own) meta.append(element('span', 'you-tag', 'YOU'));
-    meta.append(element('time', 'message-time', new Date(message.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })));
+    meta.append(element('time', 'message-time', rooms.find(r => r.id === message.room)?.persistent ? new Date(message.time).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : new Date(message.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })));
     row.id = `message-${message.id}`;
     if (message.mentions?.some(person => person.id === me.id)) row.classList.add('mentioned');
     const replyButton = element('button', 'message-reply', 'Reply');
-    replyButton.type = 'button'; replyButton.disabled = Boolean(message.locked); replyButton.onclick = () => { setReply(message); $('#message').focus(); };
+    replyButton.type = 'button'; replyButton.disabled = Boolean(message.locked) || (rooms.find(r => r.id === message.room)?.adminOnly && !me.admin); replyButton.onclick = () => { setReply(message); $('#message').focus(); };
     meta.append(replyButton);
     if (message.editedAt) meta.append(element('span', 'message-time', '(edited)'));
-    if (own && !message.locked) {
+    if ((own || (me.admin && rooms.find(r => r.id === message.room)?.adminOnly)) && !message.locked) {
       const edit = element('button', 'message-reply', 'Edit'); edit.type = 'button';
       edit.onclick = () => {
         if (editSaving) return;
@@ -180,7 +185,7 @@ async function receive(message) {
   }
   if (matches(message) && !messages.some(m => m.id === message.id)) {
     const version = revision;
-    messages = [...messages, message.encrypted ? { ...message, text: 'Decrypting…', locked: true } : message].slice(-100); renderMessages();
+    messages = [...messages, message.encrypted ? { ...message, text: 'Decrypting…', locked: true } : message].slice(rooms.find(r => r.id === message.room)?.persistent ? 0 : -100); renderMessages();
     if (message.encrypted) {
       const decoded = await decodePrivate(message);
       if (version !== revision) return;
@@ -235,7 +240,7 @@ $('#edit-message-form').onsubmit = async event => {
 function updateComposerState(problem) {
   const privateChat = Boolean(current?.peer), ready = Boolean(encryptionClient && peerIdentity?.id === current?.peer);
   const groupChat = Boolean(current?.group), groupReady = Boolean(encryptionClient && groupState?.id === current?.group && groupState?.joined);
-  $('#message').disabled = !current || (privateChat && !ready) || (groupChat && !groupReady);
+  $('#message').disabled = !current || (rooms.find(r => r.id === current?.room)?.adminOnly && !me.admin) || (privateChat && !ready) || (groupChat && !groupReady);
   $('#message').required = !pendingImage;
   $('.send-button').disabled = $('#message').disabled || sending || imagePreparing;
   $('#emoji-toggle').disabled = $('#message').disabled;
@@ -537,7 +542,7 @@ function updateAppearance(person) {
   people = people.map(p => p.id === person.id ? { ...p, ...person } : p);
   renderPeople(); renderDMs();
 }
-function updateSession(session) { Object.assign(me, session); $('#identity-kind').textContent = me.account ? 'Persistent account' : 'Guest identity'; setAdmin(me.admin); updateAppearance(me); renderMessages(); }
+function updateSession(session) { Object.assign(me, session); updateComposerState(); $('#identity-kind').textContent = me.account ? 'Persistent account' : 'Guest identity'; setAdmin(me.admin); updateAppearance(me); renderMessages(); }
 $('#display-as-admin').onchange = async event => {
   const toggle = event.target; toggle.disabled = true;
   try { updateSession(await api('admin/appearance', { displayAsAdmin: toggle.checked })); $('#admin-error').textContent = ''; }
@@ -579,7 +584,7 @@ function renderAdminBans() {
 }
 $('#create-room').onsubmit = async event => { event.preventDefault(); const button = $('#create-room button'); button.disabled = true; try { await api('admin/create', { name: $('#new-room').value, description: $('#new-description').value }); $('#create-room').reset(); $('#admin-error').textContent = ''; } catch(e) { $('#admin-error').textContent = e.message; } finally { button.disabled = false; } };
 function renderAdminRooms() {
-  $('#admin-rooms').replaceChildren(...rooms.map(room => { const row = element('div', 'admin-room'), button = element('button', 'delete-room', 'Remove'); row.append(element('span', '', room.name), button); button.onclick = () => { deleting = { id: room.id, group: false }; $('#delete-description').textContent = `“${room.name}” and its message history will be removed for everyone. This cannot be undone.`; $('#delete-error').textContent = ''; $('#delete-dialog').showModal(); }; return row; }));
+  $('#admin-rooms').replaceChildren(...rooms.filter(room => !room.adminOnly).map(room => { const row = element('div', 'admin-room'), button = element('button', 'delete-room', 'Remove'); row.append(element('span', '', room.name), button); button.onclick = () => { deleting = { id: room.id, group: false }; $('#delete-description').textContent = `“${room.name}” and its message history will be removed for everyone. This cannot be undone.`; $('#delete-error').textContent = ''; $('#delete-dialog').showModal(); }; return row; }));
 }
 $('#cancel-delete').onclick = () => $('#delete-dialog').close();
 $('#confirm-delete').onclick = async () => { $('#confirm-delete').disabled = true; try { await api(deleting.group ? 'admin/groups/delete' : 'admin/delete', deleting.group ? { group: deleting.id } : { id: deleting.id }); await refreshAdminState(); $('#delete-dialog').close(); } catch(e) { $('#delete-error').textContent = e.message; } finally { $('#confirm-delete').disabled = false; } };

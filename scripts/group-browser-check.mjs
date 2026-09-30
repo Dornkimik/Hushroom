@@ -155,7 +155,7 @@ try {
   await a.locator('#groups .group-room').waitFor({ state: 'detached' });
   assert.equal((await api(a, `groups/history?group=${group}`)).status, 404);
   assert.equal((await a.request.get(`${origin}/api/attachments/${secondImage.attachmentId}`)).status(), 404);
-  assert.equal((await api(a, 'session')).data.rooms.length, 3);
+  assert.equal((await api(a, 'session')).data.rooms.filter(r => !r.persistent).length, 3);
   // An admin outside an invite-only room can moderate metadata without joining.
   const moderated = (await api(a, 'groups/create', { name: 'Private moderation test', access: 'invite' })).data;
   await a.locator('#groups .group-room').filter({ hasText: 'Private moderation test' }).click();
