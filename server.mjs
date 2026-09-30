@@ -57,8 +57,20 @@ const emit = (s, event, data) => { for (const stream of s.streams) {
   stream.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 } };
 const broadcast = (event, data) => { for (const s of sessions.values()) emit(s, event, data); };
-const presence = () => broadcast('people', [...sessions.values()].filter(online).map(safeUser));
-const roomList = () => rooms.map(r => ({ ...r, preview: (histories.get(`room:${r.id}`) || []).at(-1)?.text?.slice(0, 100) || '', count: [...sessions.values()].filter(s => online(s) && s.room === r.id).length }));
+const presenceKey = s => s.accountId || s.id;
+function onlinePeople(viewer) {
+  const people = new Map();
+  for (const session of sessions.values()) {
+    if (!online(session)) continue;
+    const key = presenceKey(session);
+    // Keep one reachable session per account, preferring the viewer's own
+    // session so every device correctly labels its single entry as "you".
+    if (!people.has(key) || session.id === viewer.id) people.set(key, session);
+  }
+  return [...people.values()].map(safeUser);
+}
+const presence = () => { for (const session of sessions.values()) if (online(session)) emit(session, 'people', onlinePeople(session)); };
+const roomList = () => rooms.map(r => ({ ...r, preview: (histories.get(`room:${r.id}`) || []).at(-1)?.text?.slice(0, 100) || '', count: new Set([...sessions.values()].filter(s => online(s) && s.room === r.id).map(presenceKey)).size }));
 const publishRooms = () => broadcast('rooms', roomList());
 const publicSession = s => ({ ...safeUser(s), admin: isAdmin(s), account: Boolean(s.accountId) });
 const publishAppearance = s => { emit(s, 'session', publicSession(s)); broadcast('appearance', safeUser(s)); presence(); };
@@ -189,7 +201,7 @@ const server = http.createServer(async (req, res) => {
       }
       session.seen = Date.now();
       const conversations = [...sessions.values()].filter(s => s.id !== session.id && histories.has(keyFor(session, null, s.id))).map(safeUser);
-      json({ me: publicSession(session), rooms: roomList(), groups: groups.list(session), people: [...sessions.values()].filter(online).map(safeUser), conversations }); return;
+      json({ me: publicSession(session), rooms: roomList(), groups: groups.list(session), people: onlinePeople(session), conversations }); return;
     }
     if (!session) fail(401, 'Your anonymous session expired. Refresh to rejoin.');
     session.seen = Date.now();
@@ -253,7 +265,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === '/api/admin/state' && req.method === 'GET') {
       if (!isAdmin(session)) fail(403, 'Unlock admin controls first.');
-      json({ people: [...sessions.values()].filter(online).map(safeUser), bans: [...bans.values()].map(({ id, alias, bannedAt }) => ({ id, alias, bannedAt })), groups: groups.moderate('list', session) }); return;
+      json({ people: onlinePeople(session), bans: [...bans.values()].map(({ id, alias, bannedAt }) => ({ id, alias, bannedAt })), groups: groups.moderate('list', session) }); return;
     }
     if (req.method !== 'POST') fail(404, 'Not found.');
     const input = await body(req);

@@ -1,6 +1,6 @@
 const $ = selector => document.querySelector(selector);
 let me, rooms = [], people = [], adminBans = [], current, messages = [], stream, revision = 0, deleting, banning;
-let editingMessage, editSaving = false;
+let editingMessage, editSaving = false, signingOut = false;
 let replying, sending = false, suggestions = [], suggestionIndex = 0, completionStart = 0;
 let encryptionClient, encryptionError = '', peerIdentity, pendingImage, imagePreparing = false, imageRevision = 0, verificationTarget;
 const imageURLs = new Map(), imageLoads = new Map();
@@ -598,7 +598,7 @@ async function start() {
     await select(rooms[0] ? { room: rooms[0].id } : null);
     stream = new EventSource('/api/events');
     stream.onopen = () => { $('#connection').textContent = 'Connected'; $('#connection').classList.add('live'); if (current) select(current); };
-    stream.onerror = async () => { $('#connection').textContent = 'Reconnecting…'; $('#connection').classList.remove('live'); try { const auth = await api('auth/status'); if (!auth.me || auth.me.id !== me.id) { stream.close(); location.replace('/#entry'); } } catch {} };
+    stream.onerror = async () => { if (signingOut) return; $('#connection').textContent = 'Reconnecting…'; $('#connection').classList.remove('live'); try { const auth = await api('auth/status'); if (!signingOut && (!auth.me || auth.me.id !== me.id)) { stream.close(); location.replace('/#entry'); } } catch {} };
     stream.addEventListener('identity-ready', event => { const { id } = JSON.parse(event.data); if (current?.peer === id && !peerIdentity) select(current); });
     stream.addEventListener('session', event => updateSession(JSON.parse(event.data)));
     stream.addEventListener('groups-changed', () => { refreshGroups(); refreshAdminState(); });
@@ -656,8 +656,9 @@ for (const key of Object.keys(soundSettings)) {
 }
 $('#test-sound').onclick = () => playSound().then(() => { $('#sound-status').textContent = 'Sound is enabled in this tab.'; }).catch(e => { $('#sound-status').textContent = e.message; });
 $('#account-signout').onclick = async () => {
+  signingOut = true;
   try { await api('auth/logout', {}); stream?.close(); location.assign('/#entry'); }
-  catch (e) { $('#sound-status').textContent = e.message; }
+  catch (e) { signingOut = false; $('#sound-status').textContent = e.message; }
 };
 setupGroups();
 start();

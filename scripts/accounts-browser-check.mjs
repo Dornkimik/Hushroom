@@ -31,6 +31,24 @@ try {
   assert.equal(await page.locator('#open-admin').isVisible(), false);
   await enterGuest(guest, origin);
   await guest.waitForFunction(() => document.querySelector('#connection').textContent === 'Connected');
+  const secondContext = await browser.newContext(), second = await secondContext.newPage();
+  second.on('pageerror', e => errors.push(e.message));
+  await second.goto(origin);
+  await second.locator('#account-username').fill('Alice');
+  await second.locator('#account-password').fill('my long test password');
+  await second.locator('#account-submit').click(); await second.waitForURL(origin + '/chat/');
+  await second.waitForFunction(() => document.querySelector('#connection').textContent === 'Connected');
+  for (const viewer of [page, second, guest]) {
+    await viewer.waitForFunction(() => document.querySelector('#online-count').textContent === '2');
+    assert.equal(await viewer.locator('#people .person').filter({ hasText: 'Alice' }).count(), 1);
+    assert.equal(await viewer.locator('#rooms .count').first().textContent(), '2');
+    const data = await viewer.evaluate(() => fetch('/api/session').then(r => r.json()));
+    assert.equal(data.people.filter(person => person.alias === 'Alice').length, 1);
+    if (viewer !== guest) {
+      assert.equal(data.people.find(person => person.alias === 'Alice').id, data.me.id);
+      assert.equal(await viewer.locator('#people .person').filter({ hasText: 'Alice' }).isDisabled(), true);
+    }
+  }
   await guest.locator('#message').fill('Hello from the room'); await guest.locator('.send-button').click();
   await page.locator('.room-preview').filter({ hasText: 'Hello from the room' }).waitFor();
   await page.locator('#emoji-toggle').click(); await page.locator('#emoji-search').fill('grinning');
@@ -58,6 +76,20 @@ try {
   assert.equal(await page.locator('#sound-private').isChecked(), true);
   assert.equal(await page.locator('#sound-groups').isChecked(), false);
   await page.locator('#account-signout').click(); await page.waitForURL(origin + '/#entry');
+  // Signing out the initially selected session must leave the account visible
+  // and route new private conversations to its remaining encrypted session.
+  await guest.waitForFunction(async () => {
+    const data = await fetch('/api/session').then(r => r.json());
+    return people.find(person => person.alias === 'Alice')?.id === data.people.find(person => person.alias === 'Alice')?.id;
+  });
+  assert.equal(await guest.locator('#people .person').filter({ hasText: 'Alice' }).count(), 1);
+  await guest.locator('#people .person').filter({ hasText: 'Alice' }).click();
+  await guest.locator('#message').fill('Hello remaining session');
+  await guest.locator('.send-button').click();
+  await second.locator('#dms .dm-room').first().click();
+  await second.locator('#messages').getByText('Hello remaining session', { exact: true }).waitFor();
+  await secondContext.close();
+  await guest.waitForFunction(() => document.querySelector('#online-count').textContent === '1');
   await page.locator('#account-username').fill('ALICE'); await page.locator('#account-password').fill('my long test password');
   await page.locator('#account-submit').click(); await page.waitForURL(origin + '/chat/');
   await page.waitForFunction(() => document.querySelector('#my-alias').textContent === 'Alice');
