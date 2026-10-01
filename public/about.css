@@ -19,6 +19,12 @@
 .about-main section { margin-top: 64px; }
 .about-main .entry-gateway { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); align-items: start; gap: 28px 64px; margin-top: 0; padding-bottom: 64px; border-bottom: 1px solid var(--line); }
 .entry-intro { padding-top: 12px; }
+.entry-openness { max-width: 510px; padding-left: 16px; border-left: 2px solid var(--accent); }
+.entry-openness p { font-size: 13px; margin-bottom: 10px; }
+.entry-openness strong { color: var(--text); }
+.entry-source-links { display: flex; flex-wrap: wrap; gap: 10px 22px; }
+.entry-source-links a { color: var(--accent); font-size: 12px; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+.entry-source-links a span { display: inline-block; margin-left: 4px; }
 .guest-choice, .entry-return { margin-top: 36px; padding-top: 26px; border-top: 1px solid var(--line); }
 .guest-choice .entry-label, .entry-return .entry-label { margin-bottom: 10px; }
 .guest-choice h2, .entry-return h2 { font-size: 23px; margin-bottom: 10px; }
