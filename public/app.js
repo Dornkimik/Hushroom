@@ -177,6 +177,12 @@ function renderMessages() {
     replyButton.type = 'button'; replyButton.disabled = Boolean(message.locked) || (rooms.find(r => r.id === message.room)?.adminOnly && !me.admin); replyButton.onclick = () => { setReply(message); $('#message').focus(); };
     meta.append(replyButton);
     if (message.editedAt) meta.append(element('span', 'message-time', '(edited)'));
+    // Encrypted messages carry the sender's own clock. Flag a large gap from the relay's timestamp.
+    if (Number.isFinite(message.sentAt) && Math.abs(Date.parse(message.time) - message.sentAt) > 5 * 60000) {
+      const skew = element('span', 'message-time', `(sender time ${new Date(message.sentAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })})`);
+      skew.title = 'The encrypted sender time differs from the server time by more than 5 minutes. A wrong device clock or a delayed relay can cause this.';
+      meta.append(skew);
+    }
     if ((own || (me.admin && rooms.find(r => r.id === message.room)?.adminOnly)) && !message.locked) {
       const edit = element('button', 'message-reply', 'Edit'); edit.type = 'button';
       edit.onclick = () => {
@@ -284,12 +290,12 @@ $('#edit-message-form').onsubmit = async event => {
     if (message.group) {
       const state = await api(`groups/message-edit-state?${new URLSearchParams({ group: message.group, id: message.id })}`);
       const envelopes = await encryptionClient.encryptGroup({ id: message.id, group: message.group, version: message.version, sender: me.id, text,
-        replyTo: message.reply?.id || null, image: message.image || null, editVersion }, state.members);
+        replyTo: message.reply?.id || null, image: message.image || null, editVersion, sentAt: message.sentAt ?? null }, state.members);
       result = await api('groups/message-edit', { group: message.group, id: message.id, membershipVersion: state.membershipVersion, editVersion, envelopes });
     } else if (message.encrypted) {
       const person = await encryptionClient.peer(message.recipient);
       const encrypted = encryptionClient.encrypt({ id: message.id, sender: me.id, recipient: message.recipient, text,
-        replyTo: message.reply?.id || null, image: message.image || null, editVersion }, person);
+        replyTo: message.reply?.id || null, image: message.image || null, editVersion, sentAt: message.sentAt ?? null }, person);
       result = await api('message/edit', { id: message.id, editVersion, encrypted });
     } else result = await api('message/edit', { id: message.id, editVersion, text });
     await applyEdit(result);

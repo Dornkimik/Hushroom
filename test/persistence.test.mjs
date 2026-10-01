@@ -16,10 +16,11 @@ test('Railway volume keeps main rooms and deletions across deployments, includin
   let child, cookie, warnings;
   async function boot(extra = {}) {
     warnings = '';
+    // The proxy-trust warning is covered separately; only storage warnings matter here.
     child = spawn(process.execPath, ['server.mjs'], { cwd: new URL('..', import.meta.url),
       env: { ...process.env, DATA_DIR: '', RAILWAY_ENVIRONMENT_ID: 'test', RAILWAY_VOLUME_MOUNT_PATH: volume,
         PORT: String(port), HOST: '127.0.0.1', ORIGIN: publicOrigin, ADMIN_USERNAME: 'host', ADMIN_PASSWORD: 'persistent-test', ...extra }, stdio: ['ignore', 'pipe', 'pipe'] });
-    child.stderr.on('data', chunk => { warnings += chunk; });
+    child.stderr.on('data', chunk => { warnings += String(chunk).replace(/^TRUSTED_PROXY_ADDRESSES is not set.*\n?/m, ''); });
     await new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('Startup timed out')), 10000);
       child.stdout.once('data', () => { clearTimeout(timer); resolve(); });

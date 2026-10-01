@@ -49,10 +49,14 @@
       unbase64(image.key, 32); unbase64(image.nonce, 24);
     }
     if (!value.text.trim() && !image) throw new Error('Empty private message.');
+    // Optional sender clock (ms since epoch), authenticated with the message so a relay cannot silently backdate it.
+    if (value.sentAt !== undefined && (!Number.isSafeInteger(value.sentAt) || value.sentAt < 1e12 || value.sentAt > 1e13)) throw new Error('Invalid private message time.');
     return value;
   }
-  function encryptMessage({ id, sender, recipient, text, replyTo = null, image = null, editVersion = 0 }, identity, peerKey) {
-    const value = validateContent({ v: 1, kind: 'private', id, sender, recipient, text, replyTo, image, editVersion });
+  // sentAt: omitted → now; null → leave out (for edits of legacy messages without a sender time).
+  const withTime = (value, sentAt) => sentAt === null ? value : { ...value, sentAt: sentAt === undefined ? Date.now() : sentAt };
+  function encryptMessage({ id, sender, recipient, text, replyTo = null, image = null, editVersion = 0, sentAt }, identity, peerKey) {
+    const value = validateContent(withTime({ v: 1, kind: 'private', id, sender, recipient, text, replyTo, image, editVersion }, sentAt));
     const nonce = nacl.randomBytes(24);
     return { v: 1, nonce: base64(nonce), ciphertext: base64(nacl.box(encode(value), nonce, publicKey(peerKey), identity.secretKey)) };
   }
@@ -66,15 +70,16 @@
     if ((value.kind !== undefined && value.kind !== 'private') || Object.hasOwn(value, 'group') || Object.hasOwn(value, 'version')) throw new Error('Private message context did not match.');
     if ((value.editVersion || 0) !== (message.editVersion || 0) || value.id !== message.id || value.sender !== message.sender || value.recipient !== message.recipient ||
         value.replyTo !== (message.reply?.id || null) || (value.image?.id || null) !== (message.attachment?.id || null)) throw new Error('Private message metadata did not match.');
-    return { text: value.text, image: value.image };
+    return { text: value.text, image: value.image, ...(value.sentAt !== undefined ? { sentAt: value.sentAt } : {}) };
   }
   function encryptImage(bytes) {
     const key = nacl.randomBytes(32), nonce = nacl.randomBytes(24);
     return { bytes: nacl.secretbox(bytes, nonce, key), key: base64(key), nonce: base64(nonce) };
   }
-  function encryptGroupMessage({ id, group, version, sender, text, replyTo = null, image = null, editVersion = 0 }, identity, members) {
+  function encryptGroupMessage({ id, group, version, sender, text, replyTo = null, image = null, editVersion = 0, sentAt }, identity, members) {
     if (typeof group !== 'string' || !Number.isInteger(version) || version < 1 || !members.some(p => p.id === sender)) throw new Error('Invalid room membership.');
-    const content = validateContent({ v: 1, text, replyTo, image, editVersion });
+    // Every member receives the same sender time, so a relay cannot reorder copies differently.
+    const content = validateContent(withTime({ v: 1, text, replyTo, image, editVersion }, sentAt));
     return Object.fromEntries(members.map(person => {
       const value = { ...content, kind: 'group', id, group, version, sender, recipient: person.id };
       const nonce = nacl.randomBytes(24);
@@ -88,7 +93,7 @@
     const value = validateContent(decode(bytes));
     if ((value.editVersion || 0) !== (message.editVersion || 0) || value.kind !== 'group' || value.id !== message.id || value.group !== message.group || value.version !== message.version ||
         value.sender !== message.sender || value.recipient !== ownId || value.replyTo !== (message.reply?.id || null) || (value.image?.id || null) !== (message.attachment?.id || null)) throw new Error('Room message metadata did not match.');
-    return { text: value.text, image: value.image };
+    return { text: value.text, image: value.image, ...(value.sentAt !== undefined ? { sentAt: value.sentAt } : {}) };
   }
   function decryptImage(bytes, image) {
     if (bytes.length !== image.size + 16) throw new Error('Invalid encrypted image size.');

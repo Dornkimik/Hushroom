@@ -9,7 +9,7 @@ import { Groups } from './lib/groups.mjs';
 import { Accounts } from './lib/accounts.mjs';
 import { Blocks, userKey } from './lib/blocks.mjs';
 import { Announcements, announcementRoom } from './lib/announcements.mjs';
-import { Security, sessionCapacity, validateOrigin } from './lib/security.mjs';
+import { Security, sessionCapacity, validateOrigin, trustedProxyList } from './lib/security.mjs';
 import { Histories } from './lib/histories.mjs';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
@@ -43,9 +43,16 @@ catch (e) { if (e.code !== 'ENOENT') throw e; feedback = []; }
 const attachmentTTL = Number(process.env.ATTACHMENT_TTL_SECONDS || 86400) * 1000;
 if (!Number.isFinite(attachmentTTL) || attachmentTTL < 1000 || attachmentTTL > 86400000) throw new Error('ATTACHMENT_TTL_SECONDS must be between 1 and 86400.');
 const attachments = new Attachments({ ttl: attachmentTTL });
-const sessions = new Map(), histories = new Histories({ attachments });
+const sessions = new Map();
+const sessionById = id => { for (const s of sessions.values()) if (s.id === id) return s; };
+const histories = new Histories({ attachments, clientOf: id => sessionById(id)?.clientKey });
 const streamClients = new Map();
-const security = new Security({ trustedProxies: process.env.TRUSTED_PROXY_ADDRESSES || '' });
+const security = new Security({ trustedProxies: trustedProxyList(process.env.TRUSTED_PROXY_ADDRESSES || '', process.env.TRUSTED_PROXY_PRESET || '') });
+if ((process.env.RAILWAY_ENVIRONMENT_ID || process.env.NODE_ENV === 'production') && !security.configured) {
+  console.warn('TRUSTED_PROXY_ADDRESSES is not set. Behind a hosting proxy or CDN every visitor shares one address, so per-visitor limits become site-wide. ' +
+    'Set TRUSTED_PROXY_ADDRESSES to the ingress network and, behind Cloudflare, TRUSTED_PROXY_PRESET=cloudflare. LOG_CLIENT_ADDRESS_ONCE=true prints one request\'s addresses to help.');
+}
+let logClientAddress = process.env.LOG_CLIENT_ADDRESS_ONCE === 'true';
 const announcements = new Announcements(dataDir);
 await announcements.load();
 const allRooms = () => [...rooms, announcementRoom];
@@ -160,6 +167,9 @@ async function body(req, maximum = 32768) {
 const server = http.createServer(async (req, res) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), bluetooth=(), browsing-topics=()');
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+  res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
   if (configuredOrigin?.startsWith('https://')) res.setHeader('Strict-Transport-Security', 'max-age=31536000');
   res.setHeader('Content-Security-Policy', "default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' blob:; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
   const json = (data, status = 200) => { res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(data)); };
@@ -171,6 +181,11 @@ const server = http.createServer(async (req, res) => {
       if (req.method !== 'GET' || !files[url.pathname]) fail(404, 'Not found.');
       const [file, type] = files[url.pathname];
       res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'no-cache' }); res.end(await readFile(path.join(root, 'public', file))); return;
+    }
+    if (logClientAddress) {
+      // Opt-in, one-time diagnostic for configuring TRUSTED_PROXY_ADDRESSES. Disable it again afterwards.
+      logClientAddress = false;
+      console.log('Client address diagnostic:', JSON.stringify({ socket: req.socket.remoteAddress, forwardedFor: req.headers['x-forwarded-for'] || null, cfConnectingIp: req.headers['cf-connecting-ip'] || null }));
     }
     const origin = configuredOrigin || `http://${req.headers.host}`;
     if (req.headers.origin && req.headers.origin !== origin) fail(403, 'Request origin is not allowed.');
@@ -184,13 +199,17 @@ const server = http.createServer(async (req, res) => {
       const input = await body(req, 4096);
       const clientKey = security.client(req);
       security.auth(clientKey, input.username);
-      sessionCapacity(sessions, session?.accountId || 'pending-account', session);
+      sessionCapacity(sessions, session?.accountId || 'pending-account', session, clientKey);
       if (session?.accountId && url.pathname.endsWith('/register')) fail(409, 'Sign out before creating another account.');
+      if (url.pathname.endsWith('/register')) {
+        if (security.clientBanned(clientKey)) fail(403, 'New accounts cannot be created from this network right now.');
+        security.register(clientKey);
+      }
       const account = url.pathname.endsWith('/register') ? await accounts.create(input.username, input.password) : await accounts.authenticate(input.username, input.password);
       if ([...bans.values()].some(ban => ban.accountId === account.id)) fail(403, 'This account is banned.');
       if (session && sessions.get(token) !== session) fail(401, 'Your session changed. Please try again.');
       if (session?.accountId && session.accountId !== account.id) fail(409, 'Sign out before switching accounts.');
-      sessionCapacity(sessions, account.id, session);
+      sessionCapacity(sessions, account.id, session, clientKey);
       // Crossing from a guest identity to an account must not broadcast a link
       // from the guest's public sender ID or retain its encryption identity.
       if (session && !session.accountId) { removeSession(token, session); session = null; }
@@ -215,7 +234,8 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/session' && req.method === 'GET') {
       if (!session) {
         const clientKey = security.client(req);
-        security.guest(clientKey); sessionCapacity(sessions);
+        if (security.clientBanned(clientKey)) fail(403, 'New guest sessions cannot be started from this network right now.');
+        security.guest(clientKey); sessionCapacity(sessions, undefined, undefined, clientKey);
         const secret = randomBytes(32).toString('hex');
         session = { id: randomUUID(), alias: `${adjectives[Math.floor(Math.random()*adjectives.length)]} ${animals[Math.floor(Math.random()*animals.length)]} ${randomBytes(2).toString('hex')}`, streams: new Set(), room: rooms[0]?.id, seen: Date.now(), sent: [], clientKey };
         sessions.set(secret, session);
@@ -247,7 +267,7 @@ const server = http.createServer(async (req, res) => {
         groups.member(group, session);
         if (!session.publicKey || version !== group.version) fail(409, 'Room membership changed. Try sending again.');
         if (req.headers['content-type'] !== 'application/octet-stream') fail(415, 'Upload encrypted image bytes only.');
-        const uploaded = await attachments.upload(req, session.id, null, { group: group.id, version });
+        const uploaded = await attachments.upload(req, session.id, null, { group: group.id, version }, session.clientKey);
         if (sessions.get(token) !== session || groups.rooms.get(group.id) !== group || group.updated + 86400000 <= Date.now() || !group.members.has(session.id) || group.version !== version) {
           attachments.remove(uploaded.id); fail(409, 'Room membership changed during upload. Try sending again.');
         }
@@ -258,7 +278,7 @@ const server = http.createServer(async (req, res) => {
       ensurePrivateAllowed(session, peer);
       if (!session.publicKey || !peer.publicKey) fail(409, 'Both people need encryption identities before uploading.');
       if (req.headers['content-type'] !== 'application/octet-stream') fail(415, 'Upload encrypted image bytes only.');
-      const uploaded = await attachments.upload(req, session.id, peer.id);
+      const uploaded = await attachments.upload(req, session.id, peer.id, {}, session.clientKey);
       // A ban or session expiry may have happened while reading the upload.
       if (sessions.get(token) !== session || ![...sessions.values()].includes(peer)) { attachments.remove(uploaded.id); fail(403, 'This private session is no longer available.'); }
       if (blocks.between(session, peer)) { attachments.remove(uploaded.id); ensurePrivateAllowed(session, peer); }
@@ -279,7 +299,7 @@ const server = http.createServer(async (req, res) => {
       const clientStreams = [...streamClients.values()].filter(key => key === clientKey).length;
       if (streamClients.size >= 2000 || clientStreams >= 30) fail(429, 'Too many active connections. Try again shortly.');
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
-      res.write(': connected\n\n'); session.streams.add(res); streamClients.set(res, clientKey); presence(); publishRooms(); emit(session, 'groups-changed', {});
+      res.write(': connected\n\n'); session.connected = true; session.streams.add(res); streamClients.set(res, clientKey); presence(); publishRooms(); emit(session, 'groups-changed', {});
       const timer = setInterval(() => { session.seen = Date.now(); res.write(': heartbeat\n\n'); }, 20000);
       res.on('close', () => { clearInterval(timer); session.streams.delete(res); streamClients.delete(res); presence(); publishRooms(); }); return;
     }
@@ -519,17 +539,24 @@ const server = http.createServer(async (req, res) => {
       const key = hash(targetToken).toString('hex');
       bans.set(key, { key, id: person.id, alias: person.alias, accountId: person.accountId, bannedAt: new Date().toISOString() });
       try { await saveBans(); } catch (error) { bans.delete(key); throw error; }
+      // Stop a banned guest from immediately returning with a fresh cookie. This is a
+      // 24-hour, memory-only block of the network key (never written to disk). Skip it
+      // when anyone else, including the admin, is currently using that network key (shared Wi-Fi, CGNAT or a misconfigured proxy).
+      const shared = [...sessions.values()].some(s => s.clientKey === person.clientKey && userKey(s) !== userKey(person));
+      const networkBlocked = Boolean(person.clientKey) && !shared && person.clientKey !== session.clientKey;
+      if (networkBlocked) security.banClient(person.clientKey, person.id);
       for (const stream of person.streams) stream.end();
       for (const [secret, s] of sessions) if (secret === targetToken || (person.accountId && s.accountId === person.accountId)) {
         removeSession(secret, s);
       } presence(); publishRooms(); broadcast('moderation', {});
-      json({ ok: true }); return;
+      json({ ok: true, networkBlocked }); return;
     }
     if (url.pathname === '/api/admin/unban') {
       const entries = [...bans.entries()].filter(([, ban]) => ban.id === input.id);
       if (!entries.length) fail(404, 'That ban no longer exists.');
       for (const [key] of entries) bans.delete(key);
       try { await saveBans(); } catch (error) { for (const [key, ban] of entries) bans.set(key, ban); throw error; }
+      security.unbanClient(input.id);
       broadcast('moderation', {});
       json({ ok: true }); return;
     }
@@ -556,7 +583,8 @@ const server = http.createServer(async (req, res) => {
 });
 setInterval(() => {
 
-  for (const [token, s] of sessions) if (!online(s) && Date.now() - s.seen > 86400000) {
+  // Sessions that never opened the chat stream (abandoned or scripted) expire after 10 minutes.
+  for (const [token, s] of sessions) if (!online(s) && Date.now() - s.seen > (s.connected ? 86400000 : 600000)) {
     removeSession(token, s);
   }
   histories.sweep(new Set([...sessions.values()].map(s => s.id)));

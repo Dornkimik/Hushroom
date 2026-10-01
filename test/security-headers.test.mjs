@@ -19,6 +19,9 @@ test('HTTPS origins send HSTS on static/API/error responses and secure cookies',
     for (const route of ['/', '/crypto.js', '/missing', '/api/auth/status', '/api/session']) {
       const response = await fetch(local + route);
       assert.equal(response.headers.get('strict-transport-security'), 'max-age=31536000');
+      assert.equal(response.headers.get('cross-origin-opener-policy'), 'same-origin');
+      assert.equal(response.headers.get('cross-origin-resource-policy'), 'same-origin');
+      assert.match(response.headers.get('permissions-policy'), /camera=\(\), microphone=\(\), geolocation=\(\)/);
       if (route === '/api/session') {
         assert.equal(response.status, 200); assert.match(response.headers.get('set-cookie'), /; Secure/);
         assert.equal(response.headers.get('cache-control'), 'no-store');
