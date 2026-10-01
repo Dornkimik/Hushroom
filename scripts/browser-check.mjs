@@ -43,8 +43,7 @@ try {
   for(const page of [a,b,c]) { page.on('pageerror',e=>errors.push(e.message)); page.on('request',r=>{if(r.url().endsWith('/api/message') && r.method()==='POST') sent.push(r.postDataJSON());}); }
   const landing = await browser.newPage();
   await landing.goto(origin);
-  assert.match(await landing.locator('h1').textContent(), /Anonymous chat with no registration/);
-  await landing.getByRole('link', { name: 'Connect to chat' }).first().click();
+  assert.match(await landing.locator('h1').textContent(), /A little company/);
   await landing.locator('#guest-enter').click();
   await landing.waitForURL(`${origin}/chat/`);
   await landing.close();

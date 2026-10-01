@@ -31,6 +31,10 @@
       link.textContent = `Continue as ${me.alias}`;
       document.querySelector('#guest-enter').hidden = true;
       form.hidden = true;
+      document.querySelector('#guest-choice').hidden = true;
+      document.querySelector('#account-choice').hidden = true;
+      document.querySelector('#entry-return').hidden = false;
+      document.querySelector('#entry').classList.add('has-account');
       document.querySelector('#entry-signout').hidden = false;
     }
   }).catch(() => {});

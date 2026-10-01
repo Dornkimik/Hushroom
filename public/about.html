@@ -15,30 +15,44 @@
   <div class="about-shell">
     <header class="about-header">
       <a class="brand" href="/" aria-label="SilenzaChat home"><span class="brand-icon">s<span>+</span></span>silenza<span class="brand-dot">chat</span></a>
-      <div class="about-header-actions"><button class="about-cta" type="button" data-feedback aria-haspopup="dialog" aria-controls="feedback-dialog">Feedback</button><a class="about-cta" href="#entry">Connect <span aria-hidden="true">↗</span></a></div>
+      <div class="about-header-actions"><button class="about-cta" type="button" data-feedback aria-haspopup="dialog" aria-controls="feedback-dialog">Feedback</button><a class="about-nav-link" href="#rooms-title">How it works <span aria-hidden="true">↓</span></a></div>
     </header>
     <main class="about-main">
-      <p class="about-eyebrow">A QUIETER PLACE TO TALK</p>
-      <h1>Anonymous chat with no registration</h1>
-      <p class="about-lead">Open SilenzaChat, get a random alias, and start talking. You do not need to create an account, provide an email address, or use your real name. Join a public room, choose someone online for a private conversation, or make a temporary room for a group.</p>
-      <a class="about-cta about-primary" href="#entry">Connect to chat <span aria-hidden="true">↗</span></a>
-
-      <section id="entry" aria-labelledby="entry-title">
-        <h2 id="entry-title">How would you like to join?</h2>
-        <p>Drop in with a random guest name, or keep a username with an account. No email required.</p>
-        <button id="guest-enter" class="about-cta about-primary" type="button">Continue as guest</button>
-        <a id="continue-account" class="about-cta" href="/chat/" hidden>Continue to chat</a>
-        <button id="entry-signout" class="text-button" type="button" hidden>Sign out to choose another identity</button>
-        <form id="account-form" class="account-form">
-          <label for="account-mode">Account</label><select id="account-mode" name="mode"><option value="login">Log in</option><option value="register">Create account</option></select>
-          <label for="account-username">Username</label><input id="account-username" name="username" autocomplete="username" pattern="[a-zA-Z0-9_]{3,24}" minlength="3" maxlength="24" required aria-describedby="account-hint">
-          <label for="account-password">Password</label><input id="account-password" name="password" type="password" autocomplete="current-password" maxlength="128" required aria-describedby="account-hint">
-          <p id="account-hint">Usernames: 3–24 letters, numbers or underscores. New passwords: 15–128 characters. Keep your password safe: there is no email recovery. Accounts keep your username, not your chat history or encryption keys.</p>
-          <button id="account-submit" class="about-cta about-primary" type="submit">Log in &amp; enter</button>
-        </form>
+      <section id="entry" class="entry-gateway" aria-labelledby="entry-title">
+        <div class="entry-intro">
+          <p class="about-eyebrow">A QUIETER PLACE TO TALK</p>
+          <h1 id="entry-title">A little company.<br>A good conversation.</h1>
+          <p class="about-lead">Come as you are. Join a public room, find someone for a private conversation, or make a little space for your group.</p>
+          <div class="guest-choice" id="guest-choice">
+            <span class="entry-label">JUST DROPPING IN?</span>
+            <h2>Make yourself at home.</h2>
+            <p>Get a random guest name and start talking. No account, email, or real name needed.</p>
+            <button id="guest-enter" class="about-cta about-primary" type="button">Continue as guest <span aria-hidden="true">↗</span></button>
+          </div>
+          <div class="entry-return" id="entry-return" hidden>
+            <span class="entry-label">WELCOME BACK</span>
+            <h2>Your place is waiting.</h2>
+            <p>Pick up a conversation with your account.</p>
+            <a id="continue-account" class="about-cta about-primary" href="/chat/" hidden>Continue to chat</a>
+            <button id="entry-signout" class="text-button" type="button" hidden>Sign out to choose another identity</button>
+          </div>
+        </div>
+        <div class="account-choice" id="account-choice">
+          <span class="entry-label">A NAME TO COME BACK TO</span>
+          <h2>Join with an account</h2>
+          <p>Keep your username across visits. All you need is a username and password.</p>
+          <form id="account-form" class="account-form">
+            <label for="account-mode">Account</label><select id="account-mode" name="mode"><option value="login">Log in</option><option value="register">Create account</option></select>
+            <label for="account-username">Username</label><input id="account-username" name="username" autocomplete="username" pattern="[a-zA-Z0-9_]{3,24}" minlength="3" maxlength="24" required aria-describedby="account-hint">
+            <label for="account-password">Password</label><input id="account-password" name="password" type="password" autocomplete="current-password" maxlength="128" required aria-describedby="account-hint">
+            <button id="account-submit" class="about-cta about-primary" type="submit">Log in &amp; enter</button>
+            <p id="account-hint">Usernames: 3–24 letters, numbers or underscores. New passwords: 15–128 characters. Keep your password safe: there is no email recovery. Accounts keep your username, not your chat history or encryption keys.</p>
+          </form>
+        </div>
         <p id="account-error" role="alert"></p>
       </section>
       <section aria-labelledby="rooms-title">
+        <p class="about-eyebrow">ROOM FOR EVERY KIND OF HELLO</p>
         <h2 id="rooms-title">Choose the room that fits</h2>
         <div class="about-cards">
           <div class="about-card"><h3>Public chat rooms</h3><p>Talk with anyone in an open room. Public messages can be read by other visitors and the server. They are not end-to-end encrypted.</p></div>
@@ -58,7 +72,7 @@
 
       <section aria-labelledby="privacy-title">
         <h2 id="privacy-title">What “anonymous” and “encrypted” mean here</h2>
-        <p>No registration means other visitors see a random alias instead of a name you provide. It does not make you untraceable: the server handles your IP address, and your host or network provider may keep logs. What you write or show in an image can identify you.</p>
+        <p>As a guest, other visitors see a random alias. With an account, they see your chosen username. It does not make you untraceable: the server handles your IP address, and your host or network provider may keep logs. What you write or show in an image can identify you.</p>
         <p>Private chats and temporary rooms protect message contents with end-to-end encryption. The server can still see metadata such as aliases, room membership, message times, and encrypted data sizes. The website code delivered to your browser and your device also matter for security. The app has not had an independent security audit.</p>
         <p>Recent chat history is held temporarily in server memory. A server restart clears it; private sessions expire after 24 hours offline. The separate Announcements section is an exception: admins publish updates there that remain until removed. SilenzaChat is for conversations, not permanent storage.</p>
       </section>
@@ -66,10 +80,9 @@
       <section class="about-last" aria-labelledby="more-title">
         <h2 id="more-title">Want the details?</h2>
         <p>The chat includes a privacy and security FAQ covering encryption, images, identity checks, and retention. You can also inspect the <a href="https://github.com/Dornkimik/SilenzaChat" rel="noopener noreferrer">open-source code on GitHub</a>.</p>
-        <a class="about-cta about-primary" href="#entry">Connect to chat <span aria-hidden="true">↗</span></a>
       </section>
     </main>
-    <footer class="about-footer"><a href="#entry">Chat</a><a href="/" aria-current="page">How it works</a></footer>
+    <footer class="about-footer"><span>LESS NOISE. MORE CONNECTION.</span><a href="/" aria-current="page">How it works</a></footer>
   </div>
 </body>
 </html>

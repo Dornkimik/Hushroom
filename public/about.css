@@ -1,41 +1,73 @@
 .about-page { min-height: 100vh; }
-.about-shell { max-width: 1040px; margin: 0 auto; padding: 0 32px; }
+.about-shell { max-width: 1160px; margin: 0 auto; padding: 0 40px; }
 .about-header, .about-footer { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
 .about-header { min-height: 88px; padding: 14px 0; flex-wrap: wrap; border-bottom: 1px solid var(--line); }
 .about-header .brand, .about-header .about-cta { flex-shrink: 0; }
-.about-header-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.about-header-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 24px; }
 .about-header button.about-cta { background: transparent; cursor: pointer; }
-.about-main { display: block; max-width: 820px; margin: 0 auto; padding: 72px 0 80px; }
-.about-main h1 { max-width: 700px; margin: 0 0 20px; font-size: clamp(36px, 6vw, 64px); line-height: 1.1; letter-spacing: -2px; }
+.about-nav-link { font-size: 13px; color: var(--muted); }
+.about-nav-link span { margin-left: 8px; }
+.about-nav-link:hover { color: var(--accent); }
+.about-main { display: block; margin: 0 auto; padding: 64px 0 72px; }
+.about-main h1 { margin: 0 0 24px; font-size: clamp(36px, 4.6vw, 58px); line-height: 1.12; letter-spacing: -2px; }
 .about-main h2 { margin: 0 0 20px; font-size: clamp(23px, 3vw, 30px); line-height: 1.25; letter-spacing: -.7px; }
 .about-main h3 { margin: 0 0 12px; font-size: 16px; }
 .about-main p, .about-steps { color: var(--muted); font-size: 15px; line-height: 1.8; }
 .about-main p { margin: 0 0 16px; }
-.about-main .about-lead { max-width: 730px; margin-bottom: 26px; font-size: 18px; }
-.about-main .about-eyebrow { margin-bottom: 18px; color: var(--accent); font-size: 11px; font-weight: 700; letter-spacing: 1.7px; }
-.about-main section { margin-top: 76px; }
-.about-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
-.about-card { padding: 22px; border: 1px solid var(--line); border-radius: 12px; background: var(--side); }
+.about-main .about-lead { max-width: 510px; font-size: 18px; }
+.about-main .about-eyebrow, .entry-label { display: block; margin-bottom: 18px; color: var(--accent); font-size: 11px; font-weight: 700; letter-spacing: 1.7px; }
+.about-main section { margin-top: 64px; }
+.about-main .entry-gateway { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); align-items: start; gap: 28px 64px; margin-top: 0; padding-bottom: 64px; border-bottom: 1px solid var(--line); }
+.entry-intro { padding-top: 12px; }
+.guest-choice, .entry-return { margin-top: 36px; padding-top: 26px; border-top: 1px solid var(--line); }
+.guest-choice .entry-label, .entry-return .entry-label { margin-bottom: 10px; }
+.guest-choice h2, .entry-return h2 { font-size: 23px; margin-bottom: 10px; }
+.guest-choice p { max-width: 400px; }
+.account-choice { padding: 30px; border: 1px solid var(--line); border-radius: 16px; background: var(--side); }
+.account-choice .entry-label { margin-bottom: 12px; }
+.account-choice h2 { font-size: 26px; margin-bottom: 10px; }
+.account-choice > p { font-size: 14px; }
+.account-choice .account-form { max-width: none; margin-top: 24px; gap: 8px; }
+.account-form label { font-size: 12px; font-weight: 600; }
+.account-choice .account-form input, .account-choice .account-form select { background: var(--bg); margin-bottom: 8px; min-height: 44px; }
+.account-form .about-cta { justify-content: center; margin: 4px 0 8px; min-height: 46px; }
+.account-form #account-hint { font-size: 11px; line-height: 1.7; margin: 0; }
+#account-error { grid-column: 1 / -1; margin: 0; }
+#account-error:empty { display: none; }
+.entry-return .text-button { display: block; margin-top: 18px; padding: 0; }
+.entry-gateway.has-account { grid-template-columns: minmax(0, 720px); }
+.about-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.about-card { padding: 24px; border: 1px solid var(--line); border-radius: 12px; background: var(--side); }
 .about-card p { margin: 0; font-size: 13px; }
 .about-steps { padding-left: 22px; }
 .about-steps li { margin-bottom: 16px; padding-left: 8px; }
 .about-steps strong { color: var(--text); }
-.about-cta { display: inline-flex; align-items: center; gap: 14px; padding: 12px 16px; border: 1px solid var(--line); border-radius: 8px; font-size: 13px; font-weight: 700; }
+.about-cta { display: inline-flex; align-items: center; gap: 20px; padding: 12px 18px; border: 1px solid var(--line); border-radius: 8px; font-size: 13px; font-weight: 700; }
 .about-cta:hover { border-color: var(--accent); }
 .about-primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .about-primary:hover { opacity: .9; }
-.about-last a:not(.about-cta) { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
-.about-last .about-cta { margin-top: 10px; }
-.about-footer { justify-content: flex-start; flex-wrap: wrap; gap: 26px; min-height: 80px; padding: 20px 0; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+.about-last a { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
+.about-footer { flex-wrap: wrap; min-height: 80px; padding: 20px 0; border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; letter-spacing: .8px; }
 .about-footer a:hover { color: var(--accent); }
+@media (max-width: 850px) {
+  .about-shell { padding: 0 24px; }
+  .about-main .entry-gateway { gap: 28px; }
+  .account-choice { padding: 24px; }
+}
 @media (max-width: 650px) {
   .about-shell { padding: 0 20px; }
   .about-header { min-height: 72px; }
   .about-header .brand { font-size: 19px; }
   .about-header .brand-icon { width: 26px; height: 26px; font-size: 22px; }
-  .about-main { padding: 52px 0 64px; }
+  .about-header-actions { gap: 14px; }
+  .about-main { padding: 36px 0 48px; }
   .about-main h1 { letter-spacing: -1.4px; }
   .about-main .about-lead { font-size: 16px; }
-  .about-main section { margin-top: 58px; }
+  .about-main section { margin-top: 48px; }
+  .about-main .entry-gateway { grid-template-columns: 1fr; padding-bottom: 40px; }
+  .entry-intro { padding-top: 0; }
+  .guest-choice, .entry-return { margin-top: 24px; padding-top: 22px; }
+  .guest-choice .about-cta { width: 100%; justify-content: space-between; }
+  .account-form input, .account-form select { font-size: 16px; }
   .about-cards { grid-template-columns: 1fr; }
 }
