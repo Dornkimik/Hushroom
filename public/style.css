@@ -488,3 +488,20 @@ dialog input, #emoji-search { border-radius: 7px; background: var(--side); }
   .section-label.updates-label, .section-label.main-rooms-label { display: flex; margin: 16px 0 8px; }
   #rooms { margin-top: 0; }
 }
+
+/* Independent chat actions keep navigation and removal accessible. */
+.dm-row, .person-row { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.dm-row .dm-room { flex: 1; min-width: 0; margin-bottom: 0; }
+.dm-row .name { overflow-wrap: anywhere; }
+.dm-remove, .person-block { flex-shrink: 0; background: transparent; color: var(--muted); border-radius: 6px; }
+.dm-remove { width: 32px; min-height: 36px; font-size: 20px; }
+.person-block { min-height: 36px; padding: 4px 6px; font-size: 11px; }
+.dm-remove:hover, .person-block:hover { background: var(--panel); color: var(--danger); }
+.person-row .person { flex: 1; min-width: 0; }
+.blocked-settings { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--line); }
+.blocked-user { display: flex; align-items: center; justify-content: space-between; gap: 16px; overflow-wrap: anywhere; }
+@media (max-width: 650px) {
+  .dm-row { flex-shrink: 0; }
+  .person-row { min-width: 210px; }
+  .person-row .person { width: auto; min-width: 0; }
+}

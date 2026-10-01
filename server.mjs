@@ -7,6 +7,7 @@ import nacl from 'tweetnacl';
 import { Attachments } from './lib/attachments.mjs';
 import { Groups } from './lib/groups.mjs';
 import { Accounts } from './lib/accounts.mjs';
+import { Blocks, userKey } from './lib/blocks.mjs';
 import { Announcements, announcementRoom } from './lib/announcements.mjs';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
@@ -45,6 +46,8 @@ await announcements.load();
 const allRooms = () => [...rooms, announcementRoom];
 const accounts = new Accounts(dataDir);
 await accounts.load();
+const blocks = new Blocks(dataDir);
+await blocks.load();
 // Bootstrap only a new installation. Never promote an existing user by name.
 if (process.env.ADMIN_USERNAME && process.env.ADMIN_PASSWORD && !accounts.items.length) {
   await accounts.create(process.env.ADMIN_USERNAME, process.env.ADMIN_PASSWORD, 'admin');
@@ -76,6 +79,14 @@ function onlinePeople(viewer) {
 const presence = () => { for (const session of sessions.values()) if (online(session)) emit(session, 'people', onlinePeople(session)); };
 const roomList = () => allRooms().map(r => ({ ...r, preview: (r.persistent ? announcements.messages : histories.get(`room:${r.id}`) || []).at(-1)?.text?.slice(0, 100) || '', count: new Set([...sessions.values()].filter(s => online(s) && s.room === r.id).map(presenceKey)).size }));
 const publishRooms = () => broadcast('rooms', roomList());
+const privatePreferences = s => ({
+  blocks: blocks.list(s).map(item => ({ ...item, peers: [...sessions.values()].filter(peer => userKey(peer) === item.key).map(peer => peer.id) })),
+  hiddenChats: [...(s.hiddenChats || [])]
+});
+const publishPrivatePreferences = s => {
+  for (const user of sessions.values()) if (user === s || (s.accountId && user.accountId === s.accountId)) emit(user, 'private-preferences', privatePreferences(user));
+};
+const ensurePrivateAllowed = (s, peer) => { if (blocks.between(s, peer)) fail(403, 'Private chat is unavailable because one of you has blocked the other.'); };
 const publicSession = s => ({ ...safeUser(s), admin: isAdmin(s), account: Boolean(s.accountId) });
 const publishAppearance = s => { emit(s, 'session', publicSession(s)); broadcast('appearance', safeUser(s)); presence(); };
 const groups = new Groups({ isAdmin, emit, broadcast, safeUser, attachments, findUser: id => [...sessions.values()].find(s => s.id === id) });
@@ -204,8 +215,8 @@ const server = http.createServer(async (req, res) => {
         cookie(secret);
       }
       session.seen = Date.now();
-      const conversations = [...sessions.values()].filter(s => s.id !== session.id && histories.has(keyFor(session, null, s.id))).map(safeUser);
-      json({ me: publicSession(session), rooms: roomList(), groups: groups.list(session), people: onlinePeople(session), conversations }); return;
+      const conversations = [...sessions.values()].filter(s => s.id !== session.id && histories.has(keyFor(session, null, s.id)) && !session.hiddenChats?.has(s.id) && !blocks.between(session, s)).map(safeUser);
+      json({ me: publicSession(session), rooms: roomList(), groups: groups.list(session), people: onlinePeople(session), conversations, ...privatePreferences(session) }); return;
     }
     if (!session) fail(401, 'Your anonymous session expired. Refresh to rejoin.');
     session.seen = Date.now();
@@ -216,8 +227,10 @@ const server = http.createServer(async (req, res) => {
       if (sessions.get(token) !== session) fail(403, 'This session is no longer available.');
       json(groups.handle(req.method, action, session, input)); return;
     }
+    if (url.pathname === '/api/private/preferences' && req.method === 'GET') { json(privatePreferences(session)); return; }
     if (url.pathname === '/api/identity' && req.method === 'GET') {
       const peer = [...sessions.values()].find(s => s.id === url.searchParams.get('peer'));
+      if (peer) ensurePrivateAllowed(session, peer);
       if (!peer?.publicKey) fail(409, 'This person has not enabled private encryption yet. They need to open or refresh SilenzaChat.');
       json({ id: peer.id, publicKey: peer.publicKey }); return;
     }
@@ -235,11 +248,13 @@ const server = http.createServer(async (req, res) => {
       }
       const peer = [...sessions.values()].find(s => s.id === url.searchParams.get('peer'));
       if (!peer || peer.id === session.id) fail(404, 'That person is no longer available.');
+      ensurePrivateAllowed(session, peer);
       if (!session.publicKey || !peer.publicKey) fail(409, 'Both people need encryption identities before uploading.');
       if (req.headers['content-type'] !== 'application/octet-stream') fail(415, 'Upload encrypted image bytes only.');
       const uploaded = await attachments.upload(req, session.id, peer.id);
       // A ban or session expiry may have happened while reading the upload.
       if (sessions.get(token) !== session || ![...sessions.values()].includes(peer)) { attachments.remove(uploaded.id); fail(403, 'This private session is no longer available.'); }
+      if (blocks.between(session, peer)) { attachments.remove(uploaded.id); ensurePrivateAllowed(session, peer); }
       json(uploaded); return;
     }
     if (url.pathname.startsWith('/api/attachments/')) {
@@ -274,6 +289,25 @@ const server = http.createServer(async (req, res) => {
     if (req.method !== 'POST') fail(404, 'Not found.');
     const input = await body(req);
     if (sessions.get(token) !== session) fail(401, 'Your session has ended.');
+    if (url.pathname === '/api/private/block') {
+      if (typeof input.blocked !== 'boolean') fail(400, 'Choose block or unblock.');
+      const peer = [...sessions.values()].find(person => person.id === input.peer);
+      const existing = blocks.list(session).find(item => item.key === input.key);
+      if (input.blocked && (!peer || userKey(peer) === userKey(session))) fail(400, 'Choose another user to block.');
+      if (!input.blocked && !existing) fail(404, 'Blocked user not found.');
+      if (input.blocked && blocks.list(session).length >= 500 && !blocks.has(session, peer)) fail(400, 'Your blocked list is full.');
+      await blocks.update(session, input.blocked ? userKey(peer) : existing.key, input.blocked ? peer.alias : existing.alias, input.blocked);
+      publishPrivatePreferences(session); json(privatePreferences(session)); return;
+    }
+    if (url.pathname === '/api/private/hide' || url.pathname === '/api/private/show') {
+      if (typeof input.peer !== 'string' || !/^[0-9a-f-]{36}$/.test(input.peer) || input.peer === session.id) fail(400, 'Choose a private conversation.');
+      if (url.pathname.endsWith('/show') && ![...sessions.values()].some(person => person.id === input.peer)) fail(404, 'Conversation is no longer available.');
+      session.hiddenChats ||= new Set();
+      if (url.pathname.endsWith('/hide') && session.hiddenChats.size >= 5000 && !session.hiddenChats.has(input.peer)) fail(400, 'Too many hidden conversations.');
+      if (url.pathname.endsWith('/hide')) session.hiddenChats.add(input.peer);
+      else session.hiddenChats.delete(input.peer);
+      publishPrivatePreferences(session); json({ ok: true }); return;
+    }
     if (url.pathname === '/api/feedback') {
       if (sessions.get(token) !== session) fail(403, 'This session is no longer available.');
       const title = typeof input.title === 'string' ? input.title.trim() : '';
@@ -355,6 +389,9 @@ const server = http.createServer(async (req, res) => {
       session.sent = session.sent.filter(t => Date.now() - t < 10000);
       if (session.sent.length >= 8) fail(429, 'Take a breath. Try again in a few seconds.');
       if (message.encrypted) {
+        const peer = [...sessions.values()].find(person => person.id === message.recipient);
+        if (!peer) fail(404, 'That person is no longer available.');
+        ensurePrivateAllowed(session, peer);
         if (Object.keys(input).some(k => !['id', 'editVersion', 'encrypted'].includes(k))) fail(400, 'Private edits must contain ciphertext only.');
         const box = input.encrypted;
         if (!box || box.v !== 1 || Object.keys(box).some(k => !['v', 'nonce', 'ciphertext'].includes(k)) ||
@@ -379,6 +416,7 @@ const server = http.createServer(async (req, res) => {
       if (input.peer) {
         const peer = [...sessions.values()].find(s => s.id === input.peer);
         if (!peer || peer.id === session.id) fail(404, 'That person is no longer available.');
+        ensurePrivateAllowed(session, peer);
         if (!session.publicKey || !peer.publicKey) fail(409, 'Private encryption is not ready.');
         if (Object.keys(input).some(key => !['peer', 'id', 'encrypted', 'replyTo', 'attachmentId'].includes(key))) fail(400, 'Private messages must contain ciphertext only.');
         const box = input.encrypted;
@@ -399,6 +437,7 @@ const server = http.createServer(async (req, res) => {
         session.sent.push(Date.now());
         if (history.length >= 100) attachments.remove(history[0].attachment?.id);
         histories.set(key, [...history, message].slice(-100));
+        session.hiddenChats?.delete(peer.id); peer.hiddenChats?.delete(session.id);
         emit(session, 'message', message); emit(peer, 'message', message); json(message); return;
       }
       if (input.encrypted || input.attachmentId) fail(400, 'Encrypted attachments belong in private conversations.');

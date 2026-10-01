@@ -14,6 +14,14 @@ Public-room messages are visible to other visitors and are not end-to-end encryp
 
 This protection depends on trusting the website code delivered to your browser. Someone who controls the website could change that code to capture messages or keys. A compromised device or browser extension could expose them too.
 
+### Blocking and removing private chats
+
+Choose **Block** beside someone in **In good company**, or **Block user** in a private chat, to stop private messages, edits, and new image uploads in both directions. Account blocks apply to all of that account's sessions and survive sign-out and server restarts. Guest blocks last for the current guest session. Open **Sound & account settings** to unblock someone. Blocking does not hide people or messages in shared public or temporary rooms.
+
+Choose **×** beside a private chat to remove it from your sidebar. This also clears its unread count and local draft. Removal survives refresh in that session and applies to its other open tabs. It leaves the conversation and messages available to the other participant; a new message or selecting the person again restores it.
+
+Run `npm run test:private-controls:browser` to check blocking, unblocking, sidebar removal, refresh, shared tabs, and mobile controls. `npm test` also covers server enforcement and account block persistence.
+
 ### Temporary rooms
 
 Choose **＋ Create** beside **Temporary rooms** to create a user-owned room. Give it a name, description, and rules, and choose **Open to everyone** or **Invite only**. Invite-only rooms appear in the chat directory only to their members and invited sessions; owners invite people from **Room details & members**. Owners can edit details and access, kick members, transfer ownership to another member, or delete the room. Members can leave; an owner with other members must transfer ownership or delete the room first.

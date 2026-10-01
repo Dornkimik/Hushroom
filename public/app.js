@@ -4,6 +4,8 @@ let editingMessage, editSaving = false, signingOut = false;
 let replying, sending = false, suggestions = [], suggestionIndex = 0, completionStart = 0;
 let encryptionClient, encryptionError = '', peerIdentity, pendingImage, imagePreparing = false, imageRevision = 0, verificationTarget;
 const imageURLs = new Map(), imageLoads = new Map();
+let blockedUsers = [], hiddenChats = new Set();
+const isBlocked = id => blockedUsers.some(user => user.peers.includes(id));
 const conversations = new Map(), unread = new Map(), drafts = new Map();
 const conversationKey = target => target ? `${target.group ? 'group' : target.peer ? 'peer' : 'room'}:${target.group || target.peer || target.room}` : '';
 async function api(url, data) {
@@ -35,23 +37,65 @@ function renderRooms() {
   renderAdminRooms();
   renderGroups();
 }
+$('#block-private-user').onclick = () => { if (current?.peer) changeBlock({ id: current.peer }, true); };
+async function changeBlock(person, blocked) {
+  try {
+    const prefs = await api('private/block', blocked ? { peer: person.id, blocked: true } : { key: person.key, blocked: false });
+    applyPrivatePreferences(prefs);
+  } catch (e) { error(e.message); $('#blocked-status').textContent = e.message; }
+}
+function applyPrivatePreferences(prefs) {
+  blockedUsers = prefs.blocks || []; hiddenChats = new Set(prefs.hiddenChats || []);
+  for (const id of conversations.keys()) if (hiddenChats.has(id) || isBlocked(id)) { conversations.delete(id); unread.delete(id); drafts.delete(`peer:${id}`); }
+  if (current?.peer && (hiddenChats.has(current.peer) || isBlocked(current.peer))) select(rooms[0] ? { room: rooms[0].id } : null);
+  renderPeople(); renderDMs(); renderBlockedUsers();
+}
+function renderBlockedUsers() {
+  $('#blocked-users').replaceChildren(...blockedUsers.map(person => {
+    const row = element('div', 'blocked-user'), button = element('button', 'text-button', 'Unblock');
+    button.type = 'button'; button.setAttribute('aria-label', `Unblock ${person.alias}`);
+    button.onclick = () => changeBlock(person, false);
+    row.append(element('span', '', person.alias), button); return row;
+  }));
+  if (!blockedUsers.length) $('#blocked-users').append(element('p', 'aside-hint', 'No blocked users.'));
+}
+async function removePrivateChat(id) {
+  try {
+    await api('private/hide', { peer: id }); hiddenChats.add(id);
+    conversations.delete(id); unread.delete(id); drafts.delete(`peer:${id}`);
+    if (current?.peer === id) await select(rooms[0] ? { room: rooms[0].id } : null);
+    renderDMs();
+  } catch (e) { error(e.message); }
+}
 function renderPeople() {
   $('#online-count').textContent = people.length;
   $('#people').replaceChildren(...people.map(person => {
-    const own = person.id === me.id;
-    const button = element('button', 'person'); button.disabled = own;
-    button.append(avatar(person.alias, own), username(person.alias, 'person-name', person.displayAsAdmin), element(own ? 'small' : 'span', own ? '' : 'person-arrow', own ? 'you' : '↗'));
-    button.title = own ? 'This is you' : `Chat privately with ${person.alias}`;
-    button.onclick = () => { conversations.set(person.id, person.alias); select({ peer: person.id }); }; return button;
+    const own = person.id === me.id, blocked = isBlocked(person.id);
+    const row = element('div', 'person-row'), button = element('button', 'person'); button.disabled = own || blocked;
+    button.append(avatar(person.alias, own), username(person.alias, 'person-name', person.displayAsAdmin), element(own || blocked ? 'small' : 'span', own || blocked ? '' : 'person-arrow', own ? 'you' : blocked ? 'blocked' : '↗'));
+    button.title = own ? 'This is you' : blocked ? 'Unblock in settings to chat privately' : `Chat privately with ${person.alias}`;
+    button.onclick = () => { hiddenChats.delete(person.id); conversations.set(person.id, person.alias); select({ peer: person.id }); api('private/show', { peer: person.id }).catch(e => error(e.message)); };
+    row.append(button);
+    if (!own && !blocked) {
+      const block = element('button', 'person-block', 'Block'); block.type = 'button';
+      block.setAttribute('aria-label', `Block ${person.alias}`); block.onclick = () => changeBlock(person, true); row.append(block);
+    }
+    return row;
   }));
 }
 function renderDMs() {
   $('#dm-hint').hidden = conversations.size > 0;
   $('#dms').replaceChildren(...[...conversations].map(([id, alias]) => {
+    const row = element('div', 'dm-row');
     const button = element('button', `dm-room${current?.peer === id ? ' active' : ''}`);
     button.append(element('span', '', '↗'), username(alias, 'name', people.find(p => p.id === id)?.displayAsAdmin));
     if (unread.get(id)) button.append(element('span', 'unread', unread.get(id)));
-    button.onclick = () => select({ peer: id }); return button;
+    button.onclick = () => select({ peer: id });
+    const remove = element('button', 'dm-remove', '×'); remove.type = 'button';
+    remove.setAttribute('aria-label', `Remove private chat with ${alias}`);
+    remove.title = 'Remove from sidebar. A new message will bring it back.';
+    remove.onclick = () => removePrivateChat(id);
+    row.append(button, remove); return row;
   }));
 }
 function updateHeading() {
@@ -67,6 +111,7 @@ function updateHeading() {
   $('#announcement-note').textContent = me.admin ? 'Only admins can post here. Announcements are saved until an admin removes them.' : 'Read-only: admins post updates here. Announcements are saved between restarts.';
   $('#room-badge').textContent = room?.adminOnly ? 'ANNOUNCEMENTS' : groupChat ? 'ENCRYPTED ROOM' : privateChat ? 'PRIVATE CHAT' : 'OPEN ROOM';
   $('#private-note').hidden = !privateChat && !groupChat;
+  $('#block-private-user').hidden = !privateChat;
   $('#group-details').hidden = !groupChat;
   $('#group-details').disabled = !groupState;
   $('#room-rules').hidden = !groupChat || !room?.rules;
@@ -176,6 +221,11 @@ function applyRemoval(removed) {
   renderMessages();
 }
 async function receive(message) {
+  if (!message.room && !message.group) {
+    const peer = message.sender === me.id ? message.recipient : message.sender;
+    if (isBlocked(peer)) return;
+    hiddenChats.delete(peer);
+  }
   notifyMessage(message);
   if (!message.room && !message.group) {
     const peer = message.sender === me.id ? message.recipient : message.sender;
@@ -594,7 +644,7 @@ async function start() {
   try {
     const auth = await api('auth/status');
     if (!auth.me) { location.replace('/#entry'); return; }
-    const data = await api('session'); me = data.me; rooms = data.rooms; people = data.people; groupRooms = data.groups || [];
+    const data = await api('session'); me = data.me; rooms = data.rooms; people = data.people; blockedUsers = data.blocks || []; hiddenChats = new Set(data.hiddenChats || []); renderBlockedUsers(); groupRooms = data.groups || [];
     $('#identity-kind').textContent = me.account ? 'Persistent account' : 'Guest identity';
     try { encryptionClient = await SilenzaCrypto.createClient(me.id, api); } catch(e) { encryptionError = e.message; }
     for (const person of data.conversations || []) conversations.set(person.id, person.alias);
@@ -604,6 +654,7 @@ async function start() {
     stream = new EventSource('/api/events');
     stream.onopen = () => { $('#connection').textContent = 'Connected'; $('#connection').classList.add('live'); if (current) select(current); };
     stream.onerror = async () => { if (signingOut) return; $('#connection').textContent = 'Reconnecting…'; $('#connection').classList.remove('live'); try { const auth = await api('auth/status'); if (!signingOut && (!auth.me || auth.me.id !== me.id)) { stream.close(); location.replace('/#entry'); } } catch {} };
+    stream.addEventListener('private-preferences', event => applyPrivatePreferences(JSON.parse(event.data)));
     stream.addEventListener('identity-ready', event => { const { id } = JSON.parse(event.data); if (current?.peer === id && !peerIdentity) select(current); });
     stream.addEventListener('session', event => updateSession(JSON.parse(event.data)));
     stream.addEventListener('groups-changed', () => { refreshGroups(); refreshAdminState(); });
@@ -615,7 +666,7 @@ async function start() {
       refreshGroups();
     });
     stream.addEventListener('appearance', event => updateAppearance(JSON.parse(event.data)));
-    stream.addEventListener('people', event => { people = JSON.parse(event.data); for (const person of people) updateAppearance(person); renderPeople(); renderDMs(); renderAdminPeople(); });
+    stream.addEventListener('people', event => { people = JSON.parse(event.data); api('private/preferences').then(applyPrivatePreferences).catch(() => {}); for (const person of people) updateAppearance(person); renderPeople(); renderDMs(); renderAdminPeople(); });
     stream.addEventListener('rooms', event => { rooms = JSON.parse(event.data); if (current?.room && !rooms.some(r => r.id === current.room)) { select(rooms[0] ? { room: rooms[0].id } : null); error('That room was removed by the host.'); } else if (!current && rooms[0]) select({ room: rooms[0].id }); else { renderRooms(); updateHeading(); } });
     stream.addEventListener('message', event => receive(JSON.parse(event.data)));
     stream.addEventListener('message-edited', event => applyEdit(JSON.parse(event.data)));
