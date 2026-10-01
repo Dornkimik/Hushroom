@@ -24,6 +24,24 @@ test('Cloudflare preset attributes CDN traffic to the visitor, not the shared ed
   assert.equal(new Security().configured, false);
 });
 
+test('Railway X-Real-IP is used only from the trusted edge, and IPv6 /64 counts as one client', () => {
+  assert.throws(() => new Security({ clientIpHeader: 'bad header' }), /CLIENT_IP_HEADER/);
+  const security = new Security({ trustedProxies: '100.64.0.0/10', clientIpHeader: 'X-Real-IP' });
+  const viaEdge = (real, forwarded = '172.70.240.62, 79.127.178.81') => ({ socket: { remoteAddress: '100.64.0.2' }, headers: { 'x-real-ip': real, 'x-forwarded-for': forwarded } });
+  const visitor = security.client(viaEdge('2003:f7:d742:db00:ad1d:c8ec:f168:bf13'));
+  assert.equal(visitor, security.client(viaEdge('2003:f7:d742:db00::1')));
+  assert.notEqual(visitor, security.client(viaEdge('2003:f7:d742:db01::1')));
+  assert.notEqual(visitor, security.client(viaEdge('198.51.100.1')));
+  // Different visitors behind the same Cloudflare edge stay separate.
+  assert.notEqual(security.client(viaEdge('198.51.100.1')), security.client(viaEdge('198.51.100.2')));
+  assert.throws(() => security.client(viaEdge(undefined)), { status: 503 });
+  assert.throws(() => security.client(viaEdge('1.2.3.4, 5.6.7.8')), { status: 503 });
+  // A direct, untrusted peer cannot choose its identity with the header.
+  const direct = { socket: { remoteAddress: '203.0.113.9' }, headers: { 'x-real-ip': '198.51.100.1' } };
+  assert.equal(security.client(direct), security.client({ socket: { remoteAddress: '203.0.113.9' }, headers: {} }));
+  assert.notEqual(security.client(direct), security.client(viaEdge('198.51.100.1')));
+});
+
 test('one network cannot hold the shared guest capacity, register in bulk, or return after a ban', () => {
   let now = 0;
   const sessions = new Map(Array.from({ length: SESSIONS_PER_CLIENT }, (_, i) => [i, { id: String(i), clientKey: 'attacker' }]));

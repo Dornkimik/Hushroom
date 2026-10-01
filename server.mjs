@@ -47,10 +47,11 @@ const sessions = new Map();
 const sessionById = id => { for (const s of sessions.values()) if (s.id === id) return s; };
 const histories = new Histories({ attachments, clientOf: id => sessionById(id)?.clientKey });
 const streamClients = new Map();
-const security = new Security({ trustedProxies: trustedProxyList(process.env.TRUSTED_PROXY_ADDRESSES || '', process.env.TRUSTED_PROXY_PRESET || '') });
+const security = new Security({ trustedProxies: trustedProxyList(process.env.TRUSTED_PROXY_ADDRESSES || '', process.env.TRUSTED_PROXY_PRESET || ''),
+  clientIpHeader: process.env.CLIENT_IP_HEADER || '' });
 if ((process.env.RAILWAY_ENVIRONMENT_ID || process.env.NODE_ENV === 'production') && !security.configured) {
   console.warn('TRUSTED_PROXY_ADDRESSES is not set. Behind a hosting proxy or CDN every visitor shares one address, so per-visitor limits become site-wide. ' +
-    'Set TRUSTED_PROXY_ADDRESSES to the ingress network and, behind Cloudflare, TRUSTED_PROXY_PRESET=cloudflare. LOG_CLIENT_ADDRESS_ONCE=true prints one request\'s addresses to help.');
+    'On Railway set TRUSTED_PROXY_ADDRESSES=100.64.0.0/10 and CLIENT_IP_HEADER=X-Real-IP. LOG_CLIENT_ADDRESS_ONCE=true prints one request\'s addresses to help.');
 }
 let logClientAddress = process.env.LOG_CLIENT_ADDRESS_ONCE === 'true';
 const announcements = new Announcements(dataDir);
@@ -185,7 +186,7 @@ const server = http.createServer(async (req, res) => {
     if (logClientAddress) {
       // Opt-in, one-time diagnostic for configuring TRUSTED_PROXY_ADDRESSES. Disable it again afterwards.
       logClientAddress = false;
-      console.log('Client address diagnostic:', JSON.stringify({ socket: req.socket.remoteAddress, forwardedFor: req.headers['x-forwarded-for'] || null, cfConnectingIp: req.headers['cf-connecting-ip'] || null }));
+      console.log('Client address diagnostic:', JSON.stringify({ socket: req.socket.remoteAddress, forwardedFor: req.headers['x-forwarded-for'] || null, realIp: req.headers['x-real-ip'] || null, cfConnectingIp: req.headers['cf-connecting-ip'] || null }));
     }
     const origin = configuredOrigin || `http://${req.headers.host}`;
     if (req.headers.origin && req.headers.origin !== origin) fail(403, 'Request origin is not allowed.');
