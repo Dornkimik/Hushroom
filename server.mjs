@@ -9,6 +9,8 @@ import { Groups } from './lib/groups.mjs';
 import { Accounts } from './lib/accounts.mjs';
 import { Blocks, userKey } from './lib/blocks.mjs';
 import { Announcements, announcementRoom } from './lib/announcements.mjs';
+import { Security, sessionCapacity } from './lib/security.mjs';
+import { Histories } from './lib/histories.mjs';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const dataDir = path.resolve(process.env.DATA_DIR || process.env.RAILWAY_VOLUME_MOUNT_PATH || path.join(root, 'data'));
@@ -40,7 +42,9 @@ catch (e) { if (e.code !== 'ENOENT') throw e; feedback = []; }
 const attachmentTTL = Number(process.env.ATTACHMENT_TTL_SECONDS || 86400) * 1000;
 if (!Number.isFinite(attachmentTTL) || attachmentTTL < 1000 || attachmentTTL > 86400000) throw new Error('ATTACHMENT_TTL_SECONDS must be between 1 and 86400.');
 const attachments = new Attachments({ ttl: attachmentTTL });
-const sessions = new Map(), histories = new Map(), attempts = new Map();
+const sessions = new Map(), histories = new Histories({ attachments });
+const streamClients = new Map();
+const security = new Security({ trustedProxies: process.env.TRUSTED_PROXY_ADDRESSES || '' });
 const announcements = new Announcements(dataDir);
 await announcements.load();
 const allRooms = () => [...rooms, announcementRoom];
@@ -91,6 +95,11 @@ const publicSession = s => ({ ...safeUser(s), admin: isAdmin(s), account: Boolea
 const publishAppearance = s => { emit(s, 'session', publicSession(s)); broadcast('appearance', safeUser(s)); presence(); };
 const groups = new Groups({ isAdmin, emit, broadcast, safeUser, attachments, findUser: id => [...sessions.values()].find(s => s.id === id) });
 const keyFor = (s, room, peer) => peer ? `dm:${[s.id, peer].sort().join(':')}` : `room:${room}`;
+function removeSession(token, session) {
+  sessions.delete(token); histories.removeUser(session.id);
+  groups.removeUser(session.id); attachments.removeUser(session.id);
+  for (const stream of session.streams) stream.end();
+}
 function publicMentions(text) {
   const mentions = [];
   const candidates = [...sessions.values()];
@@ -150,6 +159,7 @@ async function body(req, maximum = 32768) {
 const server = http.createServer(async (req, res) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'no-referrer');
+  if (process.env.ORIGIN?.startsWith('https://')) res.setHeader('Strict-Transport-Security', 'max-age=31536000');
   res.setHeader('Content-Security-Policy', "default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' blob:; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
   const json = (data, status = 200) => { res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(data)); };
   try {
@@ -171,36 +181,31 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/auth/status' && req.method === 'GET') { json({ me: session ? publicSession(session) : null }); return; }
     if (['/api/auth/login', '/api/auth/register'].includes(url.pathname) && req.method === 'POST') {
       const input = await body(req, 4096);
-      const address = req.socket.remoteAddress;
-      const keys = [`ip:${address}`, `user:${String(input.username).toLowerCase().slice(0, 24)}`];
-      for (const key of keys) {
-        let limit = attempts.get(key);
-        if (!limit || limit.reset <= Date.now()) limit = { count: 0, reset: Date.now() + 600000 };
-        if (!attempts.has(key) && attempts.size >= 10000) fail(429, 'Sign-in is busy. Please try again shortly.');
-        if (limit.count >= (key.startsWith('ip:') ? 100 : 10)) fail(429, 'Too many attempts. Try again in 10 minutes.');
-        limit.count++; attempts.set(key, limit);
-      }
-      if (sessions.size >= 5000) fail(503, 'The chat is full.');
+      const clientKey = security.client(req);
+      security.auth(clientKey, input.username);
+      sessionCapacity(sessions, session?.accountId || 'pending-account', session);
       if (session?.accountId && url.pathname.endsWith('/register')) fail(409, 'Sign out before creating another account.');
       const account = url.pathname.endsWith('/register') ? await accounts.create(input.username, input.password) : await accounts.authenticate(input.username, input.password);
       if ([...bans.values()].some(ban => ban.accountId === account.id)) fail(403, 'This account is banned.');
       if (session && sessions.get(token) !== session) fail(401, 'Your session changed. Please try again.');
       if (session?.accountId && session.accountId !== account.id) fail(409, 'Sign out before switching accounts.');
-      if (!session) session = { id: randomUUID(), streams: new Set(), room: rooms[0]?.id, seen: Date.now(), sent: [] };
-      attempts.delete(keys[1]);
+      sessionCapacity(sessions, account.id, session);
+      // Crossing from a guest identity to an account must not broadcast a link
+      // from the guest's public sender ID or retain its encryption identity.
+      if (session && !session.accountId) { removeSession(token, session); session = null; }
+      if (!session) session = { id: randomUUID(), streams: new Set(), room: rooms[0]?.id, seen: Date.now(), sent: [], clientKey };
+      security.authenticated(clientKey, input.username);
       session.seen = Date.now();
       session.accountId = account.id; session.alias = account.username; session.displayAsAdmin = false;
       sessions.delete(token);
       const secret = randomBytes(32).toString('hex'); sessions.set(secret, session); cookie(secret);
-      publishAppearance(session);
+      publishAppearance(session); publishRooms();
       for (const stream of session.streams) stream.end();
       json(publicSession(session)); return;
     }
     if (url.pathname === '/api/auth/logout' && req.method === 'POST') {
       if (session) {
-        sessions.delete(token); groups.removeUser(session.id); attachments.removeUser(session.id);
-        for (const key of histories.keys()) if (key.startsWith('dm:') && key.includes(session.id)) histories.delete(key);
-        for (const stream of session.streams) stream.end();
+        removeSession(token, session);
         presence(); publishRooms();
       }
       res.setHeader('Set-Cookie', 'silenza=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0');
@@ -208,9 +213,10 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === '/api/session' && req.method === 'GET') {
       if (!session) {
-        if (sessions.size >= 5000) fail(503, 'The chat is full. Try again shortly.');
+        const clientKey = security.client(req);
+        security.guest(clientKey); sessionCapacity(sessions);
         const secret = randomBytes(32).toString('hex');
-        session = { id: randomUUID(), alias: `${adjectives[Math.floor(Math.random()*adjectives.length)]} ${animals[Math.floor(Math.random()*animals.length)]} ${randomBytes(2).toString('hex')}`, streams: new Set(), room: rooms[0]?.id, seen: Date.now(), sent: [] };
+        session = { id: randomUUID(), alias: `${adjectives[Math.floor(Math.random()*adjectives.length)]} ${animals[Math.floor(Math.random()*animals.length)]} ${randomBytes(2).toString('hex')}`, streams: new Set(), room: rooms[0]?.id, seen: Date.now(), sent: [], clientKey };
         sessions.set(secret, session);
         cookie(secret);
       }
@@ -268,10 +274,13 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === '/api/events' && req.method === 'GET') {
       if (session.streams.size >= 6) fail(429, 'Too many open tabs.');
-      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
-      res.write(': connected\n\n'); session.streams.add(res); presence(); publishRooms(); emit(session, 'groups-changed', {});
+      const clientKey = security.client(req);
+      const clientStreams = [...streamClients.values()].filter(key => key === clientKey).length;
+      if (streamClients.size >= 2000 || clientStreams >= 30) fail(429, 'Too many active connections. Try again shortly.');
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
+      res.write(': connected\n\n'); session.streams.add(res); streamClients.set(res, clientKey); presence(); publishRooms(); emit(session, 'groups-changed', {});
       const timer = setInterval(() => { session.seen = Date.now(); res.write(': heartbeat\n\n'); }, 20000);
-      res.on('close', () => { clearInterval(timer); session.streams.delete(res); presence(); publishRooms(); }); return;
+      res.on('close', () => { clearInterval(timer); session.streams.delete(res); streamClients.delete(res); presence(); publishRooms(); }); return;
     }
     if (url.pathname === '/api/history' && req.method === 'GET') {
       const peer = url.searchParams.get('peer'), room = url.searchParams.get('room');
@@ -379,10 +388,11 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === '/api/message/edit') {
       if (sessions.get(token) !== session) fail(403, 'This session is no longer available.');
-      let message, history;
-      for (const items of histories.values()) {
+      let message, history, conversation;
+      histories.sweep(new Set([...sessions.values()].map(s => s.id)));
+      for (const [key, items] of histories) {
         const found = items.find(m => m.id === input.id && m.sender === session.id);
-        if (found) { message = found; history = items; break; }
+        if (found) { message = found; history = items; conversation = key; break; }
       }
       if (!message) fail(404, 'Your message is no longer available to edit.');
       if (input.editVersion !== (message.editVersion || 0) + 1) fail(409, 'This message changed. Reopen the editor and try again.');
@@ -396,7 +406,9 @@ const server = http.createServer(async (req, res) => {
         const box = input.encrypted;
         if (!box || box.v !== 1 || Object.keys(box).some(k => !['v', 'nonce', 'ciphertext'].includes(k)) ||
             !base64Bytes(box.nonce, 24) || !base64Bytes(box.ciphertext, null, 18000)) fail(400, 'Invalid encrypted private message.');
-        message.encrypted = box;
+        const next = { ...message, encrypted: box, editVersion: input.editVersion, editedAt: new Date().toISOString() };
+        histories.set(conversation, history.map(m => m === message ? next : m));
+        message = next;
       } else {
         if (Object.keys(input).some(k => !['id', 'editVersion', 'text'].includes(k))) fail(400, 'Invalid message edit.');
         const text = typeof input.text === 'string' ? input.text.trim() : '';
@@ -431,12 +443,14 @@ const server = http.createServer(async (req, res) => {
         }
         const original = input.replyTo == null ? null : history.find(m => m.id === input.replyTo);
         if (input.replyTo != null && !original) fail(400, 'That reply is no longer available in this conversation.');
-        const attachment = input.attachmentId == null ? null : attachments.claim(input.attachmentId, session.id, peer.id, input.id);
+        const upload = input.attachmentId == null ? null : attachments.get(input.attachmentId, session.id);
+        const attachment = upload ? { id: input.attachmentId, expiresAt: upload.createdAt + attachments.ttl } : null;
         const message = { id: input.id, sender: session.id, alias: session.alias, recipient: peer.id, room: null,
           time: new Date().toISOString(), displayAsAdmin: displaysAsAdmin(session), encrypted: box, reply: original ? { id: original.id } : null, attachment };
-        session.sent.push(Date.now());
-        if (history.length >= 100) attachments.remove(history[0].attachment?.id);
-        histories.set(key, [...history, message].slice(-100));
+        const nextHistory = [...history, message].slice(-100);
+        histories.check(key, nextHistory);
+        if (attachment) attachments.claim(attachment.id, session.id, peer.id, input.id);
+        histories.set(key, nextHistory); session.sent.push(Date.now());
         session.hiddenChats?.delete(peer.id); peer.hiddenChats?.delete(session.id);
         emit(session, 'message', message); emit(peer, 'message', message); json(message); return;
       }
@@ -506,7 +520,7 @@ const server = http.createServer(async (req, res) => {
       try { await saveBans(); } catch (error) { bans.delete(key); throw error; }
       for (const stream of person.streams) stream.end();
       for (const [secret, s] of sessions) if (secret === targetToken || (person.accountId && s.accountId === person.accountId)) {
-        sessions.delete(secret); groups.removeUser(s.id); attachments.removeUser(s.id); for (const stream of s.streams) stream.end();
+        removeSession(secret, s);
       } presence(); publishRooms(); broadcast('moderation', {});
       json({ ok: true }); return;
     }
@@ -520,6 +534,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === '/api/message/delete' || url.pathname === '/api/admin/remove-message') {
       const adminRemoval = url.pathname === '/api/admin/remove-message';
+      histories.sweep(new Set([...sessions.values()].map(s => s.id)));
       let found, conversation;
       for (const [key, history] of histories) {
         const message = history.find(m => m.id === input.id && (adminRemoval || m.sender === session.id));
@@ -541,11 +556,12 @@ const server = http.createServer(async (req, res) => {
 setInterval(() => {
 
   for (const [token, s] of sessions) if (!online(s) && Date.now() - s.seen > 86400000) {
-    sessions.delete(token); groups.removeUser(s.id); attachments.removeUser(s.id); for (const key of histories.keys()) if (key.startsWith('dm:') && key.includes(s.id)) histories.delete(key);
+    removeSession(token, s);
   }
+  histories.sweep(new Set([...sessions.values()].map(s => s.id)));
   attachments.sweep();
   groups.sweep();
-  for (const [ip, a] of attempts) if (Date.now() > a.reset) attempts.delete(ip);
+  security.sweep();
 }, 60000).unref();
 server.listen(Number(process.env.PORT || 3000), process.env.HOST || '127.0.0.1', () => {
   console.log(`SilenzaChat is running at ${process.env.ORIGIN || `http://localhost:${process.env.PORT || 3000}`}`);

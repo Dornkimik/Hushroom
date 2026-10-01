@@ -46,7 +46,7 @@ Run `npm run test:feedback:browser` to check submission, retries, responsive lay
 
 A random alias means you do not have to provide an account or real name, but it does not make you untraceable. The server can see connection IP addresses, aliases, who is talking to whom, message times, encrypted data sizes, and reply or attachment relationships. A hosting provider or reverse proxy may keep its own logs. What you write or show in an image could identify you as well.
 
-The app does not write chat contents or IP addresses to its own log files. It temporarily uses connection addresses for admin login throttling.
+The app does not write chat contents or IP addresses to its own log files. It uses temporary, process-local hashed address identifiers for creation, sign-in and connection limits. A reverse proxy must be explicitly configured as trusted for those limits to distinguish visitors correctly.
 
 To check a private-chat partner’s encryption key, choose **Verify identity** and compare the entire code in person, on a call, or through another trusted channel. Only mark the codes as matching after an independent comparison. This confirms the key you checked, not someone’s real-world identity. If a key changes unexpectedly, pause and check with the person before continuing.
 
@@ -56,9 +56,11 @@ Images can be sent in private chats and temporary encrypted rooms. Your browser 
 
 Metadata removal cannot hide details visible in the picture, and the recipient can save or share a decrypted copy. Choose **Delete** on your own public or private message to remove it for everyone, including an attached image. Deletion cannot remove screenshots, downloads, or copies someone has already made.
 
-Announcements are retained on disk until an admin deletes them. In other conversations, only the latest 100 messages are kept in server memory. Messages disappear when the server restarts; private histories and sessions expire after 24 hours offline. Images expire within 24 hours of upload, or sooner if the host configures a shorter period. They can also disappear when their message is deleted or leaves recent history, a participant is banned or their session expires, or the server restarts. This is a temporary chat, not a permanent inbox or backup.
+Announcements are retained on disk until an admin deletes them. In other conversations, only the latest 100 messages are kept in server memory. Messages disappear when the server restarts; private sessions expire after 24 hours offline and private histories after 24 hours without a message change. Private storage also has byte and conversation limits, so a full store can reject sends or edits until space is freed. Images expire within 24 hours of upload, or sooner if the host configures a shorter period. They can also disappear when their message is deleted or leaves recent history, a participant is banned or their session expires, or the server restarts. This is a temporary chat, not a permanent inbox or backup.
 
 ### Your browser identity
+
+Logging in or registering while using a guest identity starts a separate account session with new encryption keys. It ends the guest's private conversations and temporary-room memberships and clears their server-held private history and images. Previous public posts keep their guest alias. Account access does not publish a direct mapping to the old guest sender ID; message contents and timing can still identify you.
 
 Your browser stores a session cookie, encryption keys, remembered peer identities, and your theme preference. Decrypted messages and unsent drafts stay in the current page’s memory; SilenzaChat does not save a permanent local chat archive.
 
@@ -125,6 +127,16 @@ If you currently have rooms you want to keep on an ephemeral deployment, copy it
 Put HTTPS in front of the server and keep the `data` directory on persistent storage. Configure the proxy to allow streaming responses on `/api/events`, with buffering disabled and a timeout longer than the 20-second heartbeat. Install production dependencies with `npm ci --omit=dev`, then start with `npm start`. HTTPS (or localhost) and IndexedDB are required for private chats. Configure the reverse proxy to accept encrypted uploads up to 4 MB plus 16 bytes. Set `ATTACHMENT_TTL_SECONDS` to 1–86400 to shorten image retention; the default is 86400.
 
 Run **one server process / one replica**. Sessions and message histories are held in that process; multiple replicas need a shared identity store and message broker. The app includes message limits, admin login throttling, origin checks, escaped text rendering, and security headers. Larger public communities also need host-level abuse protection, moderation/reporting controls, and appropriate load testing.
+
+### Security deployment settings
+
+For production, use an exact HTTPS `ORIGIN`. This enables a one-year HSTS header on application responses, including errors and static assets; check that Cloudflare or your ingress forwards it. Subdomain coverage and preload are deliberately not enabled automatically.
+
+For a reverse proxy, configure `TRUSTED_PROXY_ADDRESSES` with only the actual ingress IP addresses/CIDRs and trusted intermediaries. Ensure each trusted proxy appends or sanitizes `X-Forwarded-For`, and prevent bypassing the ingress. With no allowlist the app ignores forwarding headers, so unrelated visitors behind a proxy would still share its throttle bucket. A configured trusted peer missing a valid forwarded address is rejected. Obtain Railway's actual ingress topology/networks for your service; do not assume loopback, trust every address, or accept arbitrary client IP headers.
+
+Application limits allow 30 new guests per client address and 500 globally per ten minutes, with 1,000 of the 5,000 total session slots reserved from guests. Accounts allow ten sessions. Authentication has address and address/username limits rather than a username-wide lockout. Event streams are bounded across sessions and addresses. Private history has 32 MiB global and 4 MiB per-participant serialized-data budgets and a 50-conversation per-participant limit. Host-level distributed-abuse protection is still required.
+
+Cloudflare's injected `NEL`/`Report-To` headers are controlled at Cloudflare, not by this server. Disable Network Error Logging in the zone settings if minimizing that browser telemetry is your policy, and review provider logs/backups separately. Changes here do not deploy or alter your provider account configuration.
 
 ### Search visibility
 

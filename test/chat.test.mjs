@@ -50,7 +50,7 @@ test('anonymous public chat, private isolation, admin control and persistence', 
     assert.notEqual(a.me.id, b.me.id); assert.equal(a.me.admin, false);
     assert.equal(a.me.displayAsAdmin, false);
     assert.equal((await request(c, 'admin/appearance', { displayAsAdmin: true })).status, 403);
-    const [ae,be,ce] = await Promise.all([events(a),events(b),events(c)]);
+    let [ae,be,ce] = await Promise.all([events(a),events(b),events(c)]);
     const room = a.rooms[0].id;
     const pub = await request(a, 'message', { room, text: 'Hello, everyone!', displayAsAdmin: true, admin: true }); assert.equal(pub.status, 200);
     assert.equal(pub.data.displayAsAdmin, false); // Client-supplied admin flags cannot impersonate an admin.
@@ -100,8 +100,11 @@ test('anonymous public chat, private isolation, admin control and persistence', 
     await new Promise(resolve => setTimeout(resolve, 50));
     assert.ok(ae.removals.includes(dm.data.id)); assert.ok(be.removals.includes(dm.data.id)); assert.ok(!ce.removals.includes(dm.data.id));
     assert.equal((await request(a, 'auth/login', { username: 'host', password: 'wrong' })).status, 403);
-    assert.equal((await request(a, 'auth/login', { username: 'host', password: 'integration-test-password' })).status, 200);
-    await events(a);
+    const upgraded = await request(a, 'auth/login', { username: 'host', password: 'integration-test-password' });
+    assert.equal(upgraded.status, 200); assert.notEqual(upgraded.data.id, a.me.id);
+    a.me = upgraded.data; a.identity = nacl.box.keyPair();
+    assert.equal((await request(a, 'identity', { publicKey: encryption.base64(a.identity.publicKey) })).status, 200);
+    ae = await events(a);
     assert.equal((await request(a, 'session')).data.me.displayAsAdmin, false);
     const userRoom = (await request(b, 'groups/create', { name: 'User room', access: 'invite' })).data;
     const editRoom = { group: userRoom.id, name: 'Moderated room', description: 'Updated', rules: 'Be kind', access: 'open' };
@@ -131,7 +134,7 @@ test('anonymous public chat, private isolation, admin control and persistence', 
     assert.equal((await request(b, 'session')).data.people.find(p => p.id === a.me.id).displayAsAdmin, false);
     await request(a, 'admin/appearance', { displayAsAdmin: true });
     assert.equal((await request(a, 'admin/ban', { id: a.me.id })).status, 400);
-    await new Promise(resolve => setTimeout(resolve, 100)); assert.ok(ae.removals.includes(pub.data.id)); assert.ok(ce.removals.includes(pub.data.id));
+    await new Promise(resolve => setTimeout(resolve, 100)); assert.ok(ce.removals.includes(pub.data.id));
     const remaining = (await request(c, `history?room=${room}`)).data;
     assert.equal(remaining.length, 1);
     assert.deepEqual(remaining[0].reply, { id: pub.data.id, removed: true });
@@ -161,7 +164,8 @@ test('anonymous public chat, private isolation, admin control and persistence', 
     assert.equal((await request(b, 'message/delete', { id: sentImage.data.id })).status, 404);
     assert.equal((await request(a, 'message/delete', { id: sentImage.data.id })).status, 200);
     assert.equal((await request(a, 'auth/login', { username: 'host', password: 'integration-test-password' })).status, 200);
-    assert.equal((await request(a, 'admin/remove-message', { id: literal.data.id })).status, 200);
+    // Changing from guest to account already removed the old private history.
+    assert.equal((await request(a, 'admin/remove-message', { id: literal.data.id })).status, 404);
     assert.equal((await fetch(imageURL, { headers: { Cookie: b.cookie } })).status, 404);
     await new Promise(resolve => setTimeout(resolve, 50)); assert.ok(!ce.removals.includes(sentImage.data.id));
     assert.equal((await request(a, 'admin/ban', { id: c.me.id })).status, 200);

@@ -2,6 +2,21 @@
 
 Reviewed 1 October 2026. Checkout: `c998262`. This is a source review with automated tests, bounded local reproductions, and limited live deployment checks; it is not a formal independent cryptographic audit or penetration test. Application behavior was not changed.
 
+## Remediation in the workspace
+
+The original findings and validation below describe the reviewed checkout before remediation. The follow-up implementation changes application behavior as follows:
+
+- Guest creation now has address/global throttles, reserved account capacity, per-account session limits, and bounded event streams.
+- Private histories now enforce global/per-participant byte and conversation limits, including edits. Independent idle/orphan cleanup removes their attachments and releases quotas.
+- Guest-to-account transitions create a new public identity and require a fresh encryption identity; the old cookie, streams, memberships, private history and attachments are removed.
+- Authentication uses explicit trusted-proxy client identification and address/username throttles, preventing a username alone from locking unrelated addresses out.
+- HTTPS-origin responses now carry one-year HSTS. Event streams also use `no-store`.
+- Bans, logout, guest identity changes and expiry share session cleanup, including private histories.
+
+Deployment must configure the real trusted ingress addresses and header handling, and verify HSTS at the edge. Cloudflare NEL settings and provider logging are unchanged. No deployment was performed. Static-key encryption still has no forward secrecy; this work does not replace the messaging protocol or hide metadata.
+
+The former reproduction script now checks the corrected behavior, and the normal test suite includes these regressions plus quota/proxy/expiry/HSTS tests. All 29 automated tests and the private-chat browser security check passed after implementation. The editing browser check passed the preceding messaging/edit assertions but stopped at its mobile horizontal-overflow assertion, consistent with the pre-existing account/group mobile layout failures. The original results below remain historical review evidence.
+
 The site implements real browser-side authenticated encryption for private messages and temporary-room messages. Its anonymity is limited to guest pseudonyms: operators and infrastructure providers can observe connections and activity metadata, and other visitors can observe public activity. Several concrete privacy and availability issues should be addressed before describing it as hardened secure messaging.
 
 ## Confirmed findings, in priority order
