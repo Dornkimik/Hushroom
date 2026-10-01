@@ -18,7 +18,8 @@ async function composer() {
   const node = selector => { if (!nodes.has(selector)) nodes.set(selector, new Node()); return nodes.get(selector); };
   const context = vm.createContext({
     document: { querySelector: node, querySelectorAll: () => [], createElement: () => new Node(), createTextNode: text => ({ textContent: text }), addEventListener() {} },
-    fetch: (url, options) => { calls.push({ url, options }); return new Promise(() => {}); }, URLSearchParams
+    fetch: (url, options) => { calls.push({ url, options }); return new Promise(() => {}); }, URLSearchParams,
+    window: { addEventListener() {} }
   });
   vm.runInContext(await readFile(new URL('../public/groups.js', import.meta.url), 'utf8'), context);
   vm.runInContext(await readFile(new URL('../public/app.js', import.meta.url), 'utf8'), context);

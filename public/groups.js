@@ -11,7 +11,7 @@ function renderAdminGroups() {
     row.append(element('span', '', `${group.name} · ${group.access === 'invite' ? 'Invite only' : 'Open'} · ${group.count} members`), actions);
     edit.onclick = () => {
       moderatingGroup = group.id;
-      for (const field of ['name', 'description', 'rules', 'access']) $(`#moderate-group-${field}`).value = group[field];
+      for (const field of ['name', 'description', 'rules']) $(`#moderate-group-${field}`).value = group[field];
       $('#moderate-group-error').textContent = '';
       $('#moderate-group-dialog').showModal();
     };
@@ -129,7 +129,7 @@ function setupGroups() {
   $('#moderate-group-form').onsubmit = async event => {
     event.preventDefault();
     const button = event.currentTarget.querySelector('button'); button.disabled = true;
-    const details = Object.fromEntries(['name', 'description', 'rules', 'access'].map(field => [field, $(`#moderate-group-${field}`).value]));
+    const details = Object.fromEntries(['name', 'description', 'rules'].map(field => [field, $(`#moderate-group-${field}`).value]));
     try {
       await api('admin/groups/update', { group: moderatingGroup, ...details });
       $('#moderate-group-dialog').close(); await refreshAdminState();

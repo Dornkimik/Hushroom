@@ -122,6 +122,12 @@ function updateHeading() {
   $('#welcome p').textContent = room?.adminOnly ? 'Updates, changes, and important information for the community.' : privateChat ? 'One conversation. Just the two of you.\nA simple hello is a good place to start.' : 'Join a public room without an account or email. Choose someone online for an encrypted private chat.';
 }
 function matches(message, target = current) { return target && (target.group ? message.group === target.group : message.group ? false : target.peer ? !message.room && ((message.sender === me.id && message.recipient === target.peer) || (message.sender === target.peer && message.recipient === me.id)) : message.room === target.room); }
+function validMessageRoute(message) {
+  if (!message || typeof message.id !== 'string' || typeof message.sender !== 'string') return false;
+  if (message.group) return typeof message.group === 'string' && !message.room && !message.recipient;
+  if (message.room) return typeof message.room === 'string' && !message.recipient && !message.encrypted;
+  return typeof message.recipient === 'string' && (message.sender === me.id || message.recipient === me.id);
+}
 async function select(target) {
   $('#edit-message-dialog').close(); editingMessage = null;
   setReply(null); closeSuggestions(); toggleEmoji(false);
@@ -150,7 +156,8 @@ async function select(target) {
       peerIdentity = person; updateComposerState();
     }
     if (target.room) await api('join', target);
-    const history = await Promise.all((await api(`${target.group ? 'groups/history' : 'history'}?${new URLSearchParams(target)}`)).map(decodePrivate));
+    const history = await Promise.all((await api(`${target.group ? 'groups/history' : 'history'}?${new URLSearchParams(target)}`))
+      .filter(message => validMessageRoute(message) && matches(message, target)).map(decodePrivate));
     if (version !== revision) return;
     messages = [...new Map([...history, ...messages].map(m => [m.id, m])).values()].sort((a,b) => a.time.localeCompare(b.time)).slice(rooms.find(r => r.id === target.room)?.persistent ? 0 : -100);
     renderMessages();
@@ -221,6 +228,7 @@ function applyRemoval(removed) {
   renderMessages();
 }
 async function receive(message) {
+  if (!validMessageRoute(message)) return;
   if (!message.room && !message.group) {
     const peer = message.sender === me.id ? message.recipient : message.sender;
     if (isBlocked(peer)) return;
@@ -235,8 +243,9 @@ async function receive(message) {
   }
   if (matches(message) && !messages.some(m => m.id === message.id)) {
     const version = revision;
-    messages = [...messages, message.encrypted ? { ...message, text: 'Decrypting…', locked: true } : message].slice(rooms.find(r => r.id === message.room)?.persistent ? 0 : -100); renderMessages();
-    if (message.encrypted) {
+    const needsAuthentication = !message.room;
+    messages = [...messages, needsAuthentication ? { ...message, text: 'Decrypting…', image: null, mentions: [], locked: true } : message].slice(rooms.find(r => r.id === message.room)?.persistent ? 0 : -100); renderMessages();
+    if (needsAuthentication) {
       const decoded = await decodePrivate(message);
       if (version !== revision) return;
       messages = messages.map(m => m.id === message.id && (m.editVersion || 0) === (message.editVersion || 0) ? { ...decoded, reply: m.reply } : m); renderMessages();
@@ -245,12 +254,13 @@ async function receive(message) {
   }
 }
 async function applyEdit(message) {
+  if (!validMessageRoute(message)) return;
   if (!matches(message)) return;
   const existing = messages.find(m => m.id === message.id);
   if (!existing || (existing.editVersion || 0) >= message.editVersion) return;
   const version = revision;
   // Reserve the version before decrypting so a slower event cannot overwrite a newer edit.
-  messages = messages.map(m => m.id === message.id ? { ...message, text: 'Decrypting…', locked: true, reply: m.reply } : m);
+  messages = messages.map(m => m.id === message.id ? { ...message, text: 'Decrypting…', image: null, mentions: [], locked: true, reply: m.reply } : m);
   const decoded = await decodePrivate(message);
   if (version !== revision) return;
   messages = messages.map(m => m.id === message.id && m.editVersion === message.editVersion ? { ...decoded, reply: m.reply } : m);
@@ -301,6 +311,7 @@ function updateComposerState(problem) {
   if (privateChat) $('#encryption-status').textContent = problem || (ready ? `End-to-end encrypted · ${peerIdentity.verified ? 'Identity verified' : 'Identity not verified'}` : encryptionError || 'Waiting for private encryption…');
 }
 async function decodePrivate(message) {
+  if (!validMessageRoute(message)) return { ...message, text: 'Invalid conversation metadata.', image: null, mentions: [], locked: true };
   if (message.group) {
     try {
       if (!encryptionClient) throw new Error(encryptionError || 'Room encryption is unavailable.');
@@ -314,7 +325,7 @@ async function decodePrivate(message) {
         }
       }
       return { ...message, ...plain, mentions: mentions.sort((a, b) => a.start - b.start) };
-    } catch(e) { return { ...message, text: e.message, locked: true }; }
+    } catch(e) { return { ...message, text: e.message, image: null, mentions: [], locked: true }; }
   }
   if (message.room) return message;
   try {
@@ -333,7 +344,7 @@ async function decodePrivate(message) {
       }
     }
     return { ...message, ...plain, mentions: mentions.sort((a, b) => a.start - b.start) };
-  } catch(e) { return { ...message, text: e.message, locked: true }; }
+  } catch(e) { return { ...message, text: e.message, image: null, mentions: [], locked: true }; }
 }
 function revokeImage(id) {
   if (imageURLs.has(id)) URL.revokeObjectURL(imageURLs.get(id)); imageURLs.delete(id);
@@ -711,9 +722,23 @@ for (const key of Object.keys(soundSettings)) {
   };
 }
 $('#test-sound').onclick = () => playSound().then(() => { $('#sound-status').textContent = 'Sound is enabled in this tab.'; }).catch(e => { $('#sound-status').textContent = e.message; });
+function clearSignedOutPage() {
+  revision++; current = null; groupState = null;
+  stream?.close(); encryptionClient?.dispose(); encryptionClient = null; peerIdentity = null; verificationTarget = null;
+  messages = []; drafts.clear(); clearPendingImage(); clearImageURLs(); setReply(null);
+  editingMessage = null; $('#edit-message-text').value = ''; $('#edit-message-dialog').close();
+  $('#message').value = ''; renderMessages(); updateComposerState();
+}
+window.addEventListener('silenza-signed-out', () => {
+  if (signingOut) return;
+  signingOut = true; clearSignedOutPage(); location.replace('/#entry');
+});
 $('#account-signout').onclick = async () => {
   signingOut = true;
-  try { await api('auth/logout', {}); stream?.close(); location.assign('/#entry'); }
+  try {
+    await api('auth/logout', {}); clearSignedOutPage();
+    await SilenzaCrypto.clearLocalKeys(); location.assign('/#entry');
+  }
   catch (e) { signingOut = false; $('#sound-status').textContent = e.message; }
 };
 setupGroups();

@@ -184,9 +184,12 @@ test('admin room moderation preserves encryption boundaries and cleans up delete
   const message = call(owner, 'message', send(owner, room.id));
   const upload = await attachments.upload(Readable.from([new Uint8Array(32)]), owner.id, null, { group: room.id, version: room.version });
   assert.equal(store.moderate('list', admin)[0].id, room.id);
-  for (const invalid of [{ name: '' }, { name: 'x'.repeat(41) }, { description: 'x'.repeat(121) }, { rules: 'x'.repeat(2001) }, { access: 'invalid' }]) {
+  for (const invalid of [{ name: '' }, { name: 'x'.repeat(41) }, { description: 'x'.repeat(121) }, { rules: 'x'.repeat(2001) }]) {
     assert.throws(() => store.moderate('update', admin, { group: room.id, name: 'Valid', ...invalid }), /Use a name|Choose open/);
   }
+  for (const access of ['open', 'invalid']) assert.throws(() => store.moderate('update', admin, { group: room.id, name: 'Valid', access }), /Only the room owner/);
+  assert.equal(store.get(room.id).access, 'invite');
+  assert.throws(() => call(admin, 'join', { group: room.id }), /invitation/);
   const changed = store.moderate('update', admin, { group: room.id, name: 'Updated', rules: 'Rules', access: 'invite' });
   assert.equal(changed.owner, owner.id); assert.equal(changed.version, room.version);
   assert.equal(changed.joined, false); assert.equal(changed.count, 1);

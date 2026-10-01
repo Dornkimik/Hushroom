@@ -12,12 +12,13 @@ test('Railway volume keeps main rooms and deletions across deployments, includin
   const probe = net.createServer(); probe.listen(0, '127.0.0.1'); await once(probe, 'listening');
   const port = probe.address().port; await new Promise(resolve => probe.close(resolve));
   const origin = `http://127.0.0.1:${port}`;
+  const publicOrigin = 'https://volume.example.test';
   let child, cookie, warnings;
   async function boot(extra = {}) {
     warnings = '';
     child = spawn(process.execPath, ['server.mjs'], { cwd: new URL('..', import.meta.url),
       env: { ...process.env, DATA_DIR: '', RAILWAY_ENVIRONMENT_ID: 'test', RAILWAY_VOLUME_MOUNT_PATH: volume,
-        PORT: String(port), HOST: '127.0.0.1', ORIGIN: origin, ADMIN_USERNAME: 'host', ADMIN_PASSWORD: 'persistent-test', ...extra }, stdio: ['ignore', 'pipe', 'pipe'] });
+        PORT: String(port), HOST: '127.0.0.1', ORIGIN: publicOrigin, ADMIN_USERNAME: 'host', ADMIN_PASSWORD: 'persistent-test', ...extra }, stdio: ['ignore', 'pipe', 'pipe'] });
     child.stderr.on('data', chunk => { warnings += chunk; });
     await new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('Startup timed out')), 10000);
@@ -30,7 +31,7 @@ test('Railway volume keeps main rooms and deletions across deployments, includin
   }
   async function stop() { if (child && child.exitCode === null) { const done = once(child, 'exit'); child.kill(); await done; } }
   async function post(route, body) {
-    const res = await fetch(`${origin}/api/${route}`, { method: 'POST', headers: { Cookie: cookie, Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const res = await fetch(`${origin}/api/${route}`, { method: 'POST', headers: { Cookie: cookie, Origin: publicOrigin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     if (res.headers.get('set-cookie')) cookie = res.headers.get('set-cookie').split(';')[0];
     assert.equal(res.status, 200); return res.json();
   }

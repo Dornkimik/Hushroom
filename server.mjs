@@ -9,10 +9,11 @@ import { Groups } from './lib/groups.mjs';
 import { Accounts } from './lib/accounts.mjs';
 import { Blocks, userKey } from './lib/blocks.mjs';
 import { Announcements, announcementRoom } from './lib/announcements.mjs';
-import { Security, sessionCapacity } from './lib/security.mjs';
+import { Security, sessionCapacity, validateOrigin } from './lib/security.mjs';
 import { Histories } from './lib/histories.mjs';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
+const configuredOrigin = validateOrigin(process.env.ORIGIN, process.env.NODE_ENV === 'production' || Boolean(process.env.RAILWAY_ENVIRONMENT_ID));
 const dataDir = path.resolve(process.env.DATA_DIR || process.env.RAILWAY_VOLUME_MOUNT_PATH || path.join(root, 'data'));
 if (process.env.RAILWAY_ENVIRONMENT_ID) {
   const mount = process.env.RAILWAY_VOLUME_MOUNT_PATH;
@@ -159,7 +160,7 @@ async function body(req, maximum = 32768) {
 const server = http.createServer(async (req, res) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'no-referrer');
-  if (process.env.ORIGIN?.startsWith('https://')) res.setHeader('Strict-Transport-Security', 'max-age=31536000');
+  if (configuredOrigin?.startsWith('https://')) res.setHeader('Strict-Transport-Security', 'max-age=31536000');
   res.setHeader('Content-Security-Policy', "default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' blob:; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
   const json = (data, status = 200) => { res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(data)); };
   try {
@@ -171,7 +172,7 @@ const server = http.createServer(async (req, res) => {
       const [file, type] = files[url.pathname];
       res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'no-cache' }); res.end(await readFile(path.join(root, 'public', file))); return;
     }
-    const origin = process.env.ORIGIN || `http://${req.headers.host}`;
+    const origin = configuredOrigin || `http://${req.headers.host}`;
     if (req.headers.origin && req.headers.origin !== origin) fail(403, 'Request origin is not allowed.');
     if (req.method !== 'GET' && req.headers.origin !== origin) fail(403, 'Request origin is not allowed.');
     const token = req.headers.cookie?.split(';').map(x => x.trim()).find(x => x.startsWith('silenza='))?.slice(8);

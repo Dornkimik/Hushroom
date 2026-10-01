@@ -4,6 +4,19 @@
   else root.SilenzaCrypto = factory(root.nacl);
 })(globalThis, function (nacl) {
   'use strict';
+  const activeClients = new Set();
+  let cleanupChannel;
+  function invalidateClients() {
+    for (const dispose of [...activeClients]) dispose();
+    globalThis.dispatchEvent?.(new Event('silenza-signed-out'));
+  }
+  function channel() {
+    if (!cleanupChannel && typeof BroadcastChannel !== 'undefined') {
+      cleanupChannel = new BroadcastChannel('silenzachat-key-lifecycle');
+      cleanupChannel.onmessage = event => { if (event.data === 'signed-out') invalidateClients(); };
+    }
+    return cleanupChannel;
+  }
   const encode = value => new TextEncoder().encode(JSON.stringify(value));
   const decode = bytes => JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
   function base64(bytes) {
@@ -39,16 +52,18 @@
     return value;
   }
   function encryptMessage({ id, sender, recipient, text, replyTo = null, image = null, editVersion = 0 }, identity, peerKey) {
-    const value = validateContent({ v: 1, id, sender, recipient, text, replyTo, image, editVersion });
+    const value = validateContent({ v: 1, kind: 'private', id, sender, recipient, text, replyTo, image, editVersion });
     const nonce = nacl.randomBytes(24);
     return { v: 1, nonce: base64(nonce), ciphertext: base64(nacl.box(encode(value), nonce, publicKey(peerKey), identity.secretKey)) };
   }
   function decryptMessage(message, ownId, identity, peerKey) {
-    if (message.room || !message.encrypted || message.encrypted.v !== 1 ||
+    if (message.room || message.group || !message.encrypted || message.encrypted.v !== 1 ||
         (message.sender !== ownId && message.recipient !== ownId)) throw new Error('Invalid private message.');
     const bytes = nacl.box.open(unbase64(message.encrypted.ciphertext), unbase64(message.encrypted.nonce, 24), publicKey(peerKey), identity.secretKey);
     if (!bytes) throw new Error('This private message could not be authenticated.');
     const value = validateContent(decode(bytes));
+    // Legacy private envelopes have no kind; group envelopes are never private messages.
+    if ((value.kind !== undefined && value.kind !== 'private') || Object.hasOwn(value, 'group') || Object.hasOwn(value, 'version')) throw new Error('Private message context did not match.');
     if ((value.editVersion || 0) !== (message.editVersion || 0) || value.id !== message.id || value.sender !== message.sender || value.recipient !== message.recipient ||
         value.replyTo !== (message.reply?.id || null) || (value.image?.id || null) !== (message.attachment?.id || null)) throw new Error('Private message metadata did not match.');
     return { text: value.text, image: value.image };
@@ -67,7 +82,7 @@
     }));
   }
   function decryptGroupMessage(message, ownId, identity, senderKey) {
-    if (!message.group || message.encrypted?.v !== 1) throw new Error('Invalid encrypted room message.');
+    if (!message.group || message.room || message.recipient || message.encrypted?.v !== 1) throw new Error('Invalid encrypted room message.');
     const bytes = nacl.box.open(unbase64(message.encrypted.ciphertext), unbase64(message.encrypted.nonce, 24), publicKey(senderKey), identity.secretKey);
     if (!bytes) throw new Error('This room message could not be authenticated.');
     const value = validateContent(decode(bytes));
@@ -111,10 +126,15 @@
   }
   function copyMissingEntries(db, name, entries) {
     return new Promise((resolve, reject) => {
-      const tx = db.transaction(name, 'readwrite'), store = tx.objectStore(name), keys = store.getAllKeys();
+      const tx = db.transaction(name === 'peers' ? ['identities', 'peers'] : name, 'readwrite'), store = tx.objectStore(name), keys = store.getAllKeys();
       keys.onsuccess = () => {
         const existing = new Set(keys.result);
-        for (const [key, value] of entries) if (!existing.has(key)) store.put(value, key);
+        for (const [key, value] of entries) if (!existing.has(key) || value?.revoked) {
+          if (name === 'peers') {
+            const owner = tx.objectStore('identities').get(String(key).split(':')[0]);
+            owner.onsuccess = () => { if (!owner.result?.revoked) store.put(value, key); };
+          } else store.put(value, key);
+        }
       };
       tx.oncomplete = resolve;
       tx.onabort = tx.onerror = () => reject(new Error('Could not migrate local encryption keys.'));
@@ -136,55 +156,95 @@
     }
   }
   // Read/write happen in one transaction, so simultaneous tabs cannot generate different identities.
-  async function transaction(db, storeName, id, transform) {
+  async function transaction(db, storeName, id, transform, ownerId) {
     return new Promise((resolve, reject) => {
       let tx;
-      try { tx = db.transaction(storeName, 'readwrite'); }
+      try { tx = db.transaction(ownerId ? ['identities', storeName] : storeName, 'readwrite'); }
       catch (e) {
         // Only a failure to start is safe to retry; never replay an aborted write.
         reject(Object.assign(new Error('Could not open local encryption storage.'), { cause: e, closedDatabase: e.name === 'InvalidStateError' }));
         return;
       }
+      const owner = ownerId ? tx.objectStore('identities').get(ownerId) : null;
       const store = tx.objectStore(storeName), request = store.get(id);
       let result, failure;
       request.onsuccess = () => {
-        try { result = transform(request.result); store.put(result, id); }
+        try {
+          if (owner && (!owner.result || owner.result.revoked)) throw new Error('This encryption identity has been signed out.');
+          result = transform(request.result); store.put(result, id);
+        }
         catch (e) { failure = e; tx.abort(); }
       };
       tx.oncomplete = () => resolve(result);
       tx.onabort = tx.onerror = () => reject(failure || new Error('Could not access your local encryption keys.'));
     });
   }
+  async function clearLocalKeys() {
+    invalidateClients(); channel()?.postMessage('signed-out');
+    // Mark identities revoked instead of deleting their IDs: a pending migration
+    // or another tab cannot recreate an old key after this transaction completes.
+    const revokedIds = new Set();
+    // Sweep the primary store again after legacy cleanup. Propagate every
+    // revocation so a migration already in flight cannot restore legacy-only keys.
+    for (const name of ['silenzachat-private-v1', 'silenzachat-legacy-private-v1', 'silenzachat-private-v1']) {
+      const db = await openDatabase(name);
+      try {
+        await new Promise((resolve, reject) => {
+          const tx = db.transaction(['identities', 'peers'], 'readwrite');
+          const identities = tx.objectStore('identities');
+          for (const id of revokedIds) identities.put({ revoked: true }, id);
+          const cursor = identities.openCursor();
+          cursor.onsuccess = () => { if (cursor.result) { revokedIds.add(cursor.result.key); cursor.result.update({ revoked: true }); cursor.result.continue(); } };
+          tx.objectStore('peers').clear();
+          tx.oncomplete = resolve;
+          tx.onabort = tx.onerror = () => reject(new Error('Signed out, but local encryption keys could not be cleared. Clear this site’s browser data.'));
+        });
+      } finally { db.close(); }
+    }
+  }
   async function createClient(id, api) {
     if (!globalThis.isSecureContext) throw new Error('Private chats require HTTPS (or localhost).');
-    let db = await openStore(), reopening, identity;
+    let db = await openStore(), reopening, identity, disposed = false;
+    function ensureActive() { if (disposed) throw new Error('This encryption identity has been signed out.'); }
+    function dispose() { disposed = true; identity?.secretKey.fill(0); db.close(); activeClients.delete(dispose); }
+    activeClients.add(dispose); channel();
     async function stored(storeName, key, transform) {
+      ensureActive();
+      const guarded = existing => { ensureActive(); return transform(existing); };
       const connection = db;
-      try { return await transaction(connection, storeName, key, transform); }
+      try { return await transaction(connection, storeName, key, guarded, storeName === 'peers' ? id : undefined); }
       catch (e) {
         if (!e.closedDatabase) throw e;
+        ensureActive();
         if (db === connection) {
           if (!reopening) reopening = (async () => {
             // Reopen the same database without rerunning migration or replacing keys.
             const replacement = await openDatabase(connection.name);
             try {
               if (identity) await transaction(replacement, 'identities', id, existing => {
-                if (!existing || base64(existing.publicKey) !== base64(identity.publicKey) || base64(existing.secretKey) !== base64(identity.secretKey)) {
+                ensureActive();
+                if (!existing || existing.revoked || base64(existing.publicKey) !== base64(identity.publicKey) || base64(existing.secretKey) !== base64(identity.secretKey)) {
                   throw new Error('Your local encryption identity is missing or changed. Reload the page to reconnect safely.');
                 }
                 return existing;
               });
-              db = replacement;
+              ensureActive(); db = replacement;
             } catch (error) { replacement.close(); throw error; }
           })().finally(() => { reopening = null; });
           await reopening;
         }
-        return transaction(db, storeName, key, transform);
+        return transaction(db, storeName, key, guarded, storeName === 'peers' ? id : undefined);
       }
     }
-    identity = await stored('identities', id, existing => existing || nacl.box.keyPair());
+    try {
+      identity = await stored('identities', id, existing => {
+        if (existing?.revoked) throw new Error('This encryption identity has been signed out.');
+        return existing || nacl.box.keyPair();
+      });
+    } catch (error) { dispose(); throw error; }
     const ownKey = base64(identity.publicKey);
-    await api('identity', { publicKey: ownKey });
+    try { await api('identity', { publicKey: ownKey }); ensureActive(); }
+    catch (error) { dispose(); throw error; }
     async function trust(remote) {
       publicKey(remote.publicKey);
       if (remote.id === id && remote.publicKey !== ownKey) throw new Error('Your encryption identity changed.');
@@ -196,22 +256,25 @@
     async function peer(peerId) { return trust(await api(`identity?peer=${encodeURIComponent(peerId)}`)); }
     return {
       peer,
-      encrypt: (data, person) => encryptMessage(data, identity, person.publicKey),
-      decrypt: (message, person) => decryptMessage(message, id, identity, person.publicKey),
+      dispose,
+      encrypt: (data, person) => { ensureActive(); return encryptMessage(data, identity, person.publicKey); },
+      decrypt: (message, person) => { ensureActive(); return decryptMessage(message, id, identity, person.publicKey); },
       encryptGroup: async (data, members) => {
         const trusted = await Promise.all(members.map(trust));
+        ensureActive();
         return encryptGroupMessage(data, identity, trusted);
       },
       decryptGroup: async message => {
         const person = await trust({ id: message.sender, publicKey: message.senderKey });
+        ensureActive();
         return decryptGroupMessage(message, id, identity, person.publicKey);
       },
-      code: person => verificationCode({ id, publicKey: ownKey }, person),
+      code: person => { ensureActive(); return verificationCode({ id, publicKey: ownKey }, person); },
       verify: async person => stored('peers', `${id}:${person.id}`, existing => {
         if (!existing || existing.publicKey !== person.publicKey) throw new Error('Encryption identity changed.');
         return { ...existing, verified: true };
       })
     };
   }
-  return { base64, unbase64, publicKey, encryptMessage, decryptMessage, encryptGroupMessage, decryptGroupMessage, encryptImage, decryptImage, verificationCode, createClient };
+  return { base64, unbase64, publicKey, encryptMessage, decryptMessage, encryptGroupMessage, decryptGroupMessage, encryptImage, decryptImage, verificationCode, createClient, clearLocalKeys };
 });

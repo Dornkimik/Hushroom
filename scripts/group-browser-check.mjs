@@ -165,13 +165,15 @@ try {
   await c.locator('#moderate-group-name').fill('Moderated by admin');
   await c.locator('#moderate-group-description').fill('Updated description');
   await c.locator('#moderate-group-rules').fill('Updated rules');
-  await c.selectOption('#moderate-group-access', 'open');
+  assert.equal(await c.locator('#moderate-group-access').count(), 0);
   await c.locator('#moderate-group-form button').click();
   await c.locator('#moderate-group-dialog').waitFor({ state: 'hidden' });
   await a.waitForFunction(() => document.querySelector('#room-title').textContent === 'Moderated by admin');
   assert.equal(await a.locator('#room-description').textContent(), 'Updated description');
   assert.match(await a.locator('#room-rules').textContent(), /Updated rules/);
   assert.equal((await api(c, `groups/history?group=${moderated.id}`)).status, 403);
+  assert.equal((await api(c, 'admin/groups/update', { group: moderated.id, name: 'Moderated by admin', access: 'open' })).status, 403);
+  assert.equal((await api(c, 'groups/join', { group: moderated.id })).status, 403);
   await c.setViewportSize({ width: 390, height: 844 });
   assert.equal(await c.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   await adminRow.filter({ hasText: 'Moderated by admin' }).getByRole('button', { name: 'Remove', exact: true }).click();

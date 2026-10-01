@@ -107,7 +107,7 @@ test('anonymous public chat, private isolation, admin control and persistence', 
     ae = await events(a);
     assert.equal((await request(a, 'session')).data.me.displayAsAdmin, false);
     const userRoom = (await request(b, 'groups/create', { name: 'User room', access: 'invite' })).data;
-    const editRoom = { group: userRoom.id, name: 'Moderated room', description: 'Updated', rules: 'Be kind', access: 'open' };
+    const editRoom = { group: userRoom.id, name: 'Moderated room', description: 'Updated', rules: 'Be kind' };
     assert.equal((await request(c, 'admin/state')).status, 403);
     assert.equal((await request(c, 'admin/groups/update', editRoom)).status, 403);
     assert.equal((await request(c, 'admin/groups/delete', { group: userRoom.id })).status, 403);
@@ -115,10 +115,12 @@ test('anonymous public chat, private isolation, admin control and persistence', 
     assert.equal(listedRoom.name, 'User room'); assert.equal(listedRoom.joined, false);
     assert.equal(listedRoom.members, undefined); assert.equal(listedRoom.history, undefined);
     assert.equal((await request(a, 'admin/groups/update', { ...editRoom, name: '' })).status, 400);
+    assert.equal((await request(a, 'admin/groups/update', { ...editRoom, access: 'open' })).status, 403);
     assert.equal((await request(a, 'admin/groups/update', editRoom)).status, 200);
     const updatedRoom = (await request(b, `groups/state?group=${userRoom.id}`)).data;
     assert.equal(updatedRoom.name, editRoom.name); assert.equal(updatedRoom.rules, editRoom.rules);
-    assert.equal(updatedRoom.description, editRoom.description); assert.equal(updatedRoom.access, editRoom.access);
+    assert.equal(updatedRoom.description, editRoom.description); assert.equal(updatedRoom.access, 'invite');
+    assert.equal((await request(a, 'groups/join', { group: userRoom.id })).status, 403);
     assert.equal(updatedRoom.owner, b.me.id); assert.equal(updatedRoom.count, 1);
     assert.equal((await request(a, `groups/history?group=${userRoom.id}`)).status, 403);
     assert.equal((await request(a, 'admin/groups/delete', { group: userRoom.id })).status, 200);

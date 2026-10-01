@@ -64,6 +64,8 @@ Logging in or registering while using a guest identity starts a separate account
 
 Your browser stores a session cookie, encryption keys, remembered peer identities, and your theme preference. Decrypted messages and unsent drafts stay in the current page’s memory; SilenzaChat does not save a permanent local chat archive.
 
+Signing out from the chat or landing page clears this browser's current and older private keys and remembered peer identities, including legacy storage. Its other open tabs leave the chat and invalidate their encryption clients. Key-free session-ID revocation markers prevent old tabs from restoring retired identities. Browser cleanup cannot guarantee forensic erasure or remove copies already received by someone else.
+
 Refreshing normally keeps your session and keys, and tabs in the same browser profile share them. Another browser, profile, or device has a separate identity; you can reuse an account username, but messages, memberships, and encryption keys do not sync. Clearing site data or ending an incognito session can erase your session and keys. The server cannot recover lost keys. If the session remains but its key is lost, private chat is blocked; clear the site’s data to start a new anonymous session.
 
 ### Security limits
@@ -131,6 +133,8 @@ Run **one server process / one replica**. Sessions and message histories are hel
 ### Security deployment settings
 
 For production, use an exact HTTPS `ORIGIN`. This enables a one-year HSTS header on application responses, including errors and static assets; check that Cloudflare or your ingress forwards it. Subdomain coverage and preload are deliberately not enabled automatically.
+
+Railway automatically requires an exact HTTPS `ORIGIN` at startup. On other production hosts, set `NODE_ENV=production` to enforce the same check. A missing or HTTP origin stops startup with a configuration error; configure the origin before deploying. Run `npm run test:security:browser` for authentication failures in private/group live messages, history and edits, key cleanup across tabs and legacy storage, and invite-only administration boundaries. Admins can moderate a temporary room's name, description and rules or delete it; only the owner can change who may join.
 
 For a reverse proxy, configure `TRUSTED_PROXY_ADDRESSES` with only the actual ingress IP addresses/CIDRs and trusted intermediaries. Ensure each trusted proxy appends or sanitizes `X-Forwarded-For`, and prevent bypassing the ingress. With no allowlist the app ignores forwarding headers, so unrelated visitors behind a proxy would still share its throttle bucket. A configured trusted peer missing a valid forwarded address is rejected. Obtain Railway's actual ingress topology/networks for your service; do not assume loopback, trust every address, or accept arbitrary client IP headers.
 

@@ -33,6 +33,21 @@ test('image keys are independent, and integrity failures never return plaintext'
   assert.throws(() => crypto.decryptImage(first.bytes, { ...first, size: bytes.length }), /authenticated/);
 });
 
+test('valid group ciphertext cannot be relabelled as a private message', () => {
+  const a = nacl.box.keyPair(), b = nacl.box.keyPair();
+  const envelopes = crypto.encryptGroupMessage({ id: 'message', group: 'room', version: 1, sender: 'a', text: 'Only in this group' }, a,
+    [{ id: 'a', publicKey: key(a) }, { id: 'b', publicKey: key(b) }]);
+  const privateView = { id: 'message', sender: 'a', recipient: 'b', room: null, encrypted: envelopes.b, reply: null, attachment: null };
+  assert.throws(() => crypto.decryptMessage(privateView, 'b', b, key(a)), /context/);
+  const ordinary = { ...privateView, encrypted: crypto.encryptMessage({ id: 'message', sender: 'a', recipient: 'b', text: 'Private only' }, a, key(b)) };
+  assert.equal(crypto.decryptMessage(ordinary, 'b', b, key(a)).text, 'Private only');
+  assert.throws(() => crypto.decryptMessage({ ...ordinary, group: 'room' }, 'b', b, key(a)), /Invalid private/);
+  const legacy = { v: 1, id: 'message', sender: 'a', recipient: 'b', text: 'Previously sent private message', replyTo: null, image: null };
+  const nonce = nacl.randomBytes(24);
+  const legacyBox = { v: 1, nonce: crypto.base64(nonce), ciphertext: crypto.base64(nacl.box(new TextEncoder().encode(JSON.stringify(legacy)), nonce, b.publicKey, a.secretKey)) };
+  assert.equal(crypto.decryptMessage({ ...privateView, encrypted: legacyBox }, 'b', b, key(a)).text, legacy.text);
+});
+
 test('verification codes are symmetric and bind session IDs and keys', () => {
   const a = { id: 'a', publicKey: key(nacl.box.keyPair()) }, b = { id: 'b', publicKey: key(nacl.box.keyPair()) };
   assert.equal(crypto.verificationCode(a, b), crypto.verificationCode(b, a));

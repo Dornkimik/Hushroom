@@ -1,9 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Security, sessionCapacity } from '../lib/security.mjs';
+import { Security, sessionCapacity, validateOrigin } from '../lib/security.mjs';
 import { Histories } from '../lib/histories.mjs';
 
 const req = (ip, forwarded) => ({ socket: { remoteAddress: ip }, headers: { ...(forwarded ? { 'x-forwarded-for': forwarded } : {}) } });
+test('production requires an exact HTTPS origin instead of silently omitting transport protection', () => {
+  assert.equal(validateOrigin('https://silenzachat.cc', true), 'https://silenzachat.cc');
+  assert.equal(validateOrigin(undefined), undefined);
+  assert.equal(validateOrigin('http://127.0.0.1:3000'), 'http://127.0.0.1:3000');
+  for (const value of [undefined, '', 'http://silenzachat.cc']) assert.throws(() => validateOrigin(value, true), /Production requires/);
+  for (const value of ['https://silenzachat.cc/', 'https://silenzachat.cc/chat', 'https://u:p@silenzachat.cc', 'https://silenzachat.cc?x=1', 'invalid']) {
+    assert.throws(() => validateOrigin(value), /exact HTTP or HTTPS origin/);
+  }
+});
 test('proxy trust stops spoofing and isolates legitimate clients and username throttles', () => {
   const direct = new Security();
   assert.equal(direct.client(req('127.0.0.1', '192.0.2.1')), direct.client(req('127.0.0.1', '192.0.2.2')));

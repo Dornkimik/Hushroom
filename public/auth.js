@@ -42,6 +42,7 @@
     try {
       const response = await fetch('/api/auth/logout', { method: 'POST' });
       if (!response.ok) throw new Error('Could not sign out.');
+      await SilenzaCrypto.clearLocalKeys();
       location.reload();
     } catch (e) { notice.textContent = e.message; }
   };

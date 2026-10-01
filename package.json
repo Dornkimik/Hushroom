@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node --env-file-if-exists=.env server.mjs",
     "test": "node --test",
+    "test:security:browser": "node scripts/security-recheck.mjs",
     "test:announcements:browser": "node scripts/announcements-browser-check.mjs",
     "test:private-controls:browser": "node scripts/private-controls-browser-check.mjs",
     "test:accounts:browser": "node scripts/accounts-browser-check.mjs",
