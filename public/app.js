@@ -237,6 +237,7 @@ function renderMessages() {
       offset = mention.end;
     }
     body.append(document.createTextNode(message.text.slice(offset))); content.append(body);
+    if (!message.locked && message.text) renderInviteCards(message, content);
     if (message.file && !message.locked) renderAttachment(message, content);
     row.append(avatar(message.alias, own), content); return row;
   }));

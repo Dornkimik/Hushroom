@@ -219,6 +219,10 @@ dialog input { width: 100%; padding: 12px; border: 1px solid var(--line); border
 .private-audio { display: block; width: min(100%, 420px); margin-top: 8px; }
 .attachment-note { color: var(--muted); font-size: 11px; }
 .attachment-button { margin-top: 8px; max-width: min(100%, 420px); padding: 8px 12px; overflow-wrap: anywhere; text-align: left; background: var(--panel); color: var(--accent); border-radius: 7px; }
+.invite-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 12px; max-width: min(100%, 420px); margin-top: 8px; padding: 10px 14px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); }
+.invite-card strong { overflow-wrap: anywhere; font-size: 14px; }
+.invite-card small { grid-row: 2; color: var(--muted); font-size: 12px; }
+.invite-card button { grid-row: 1 / span 2; grid-column: 2; padding: 6px 0; white-space: nowrap; }
 .attachment-save { display: inline-block; margin-top: 4px; color: var(--accent); font-size: 12px; }
 #verification-code { white-space: pre-wrap; overflow-wrap: anywhere; padding: 16px; background: var(--panel); border-radius: 8px; line-height: 1.8; }
 @media (max-width: 600px) { #composer { gap: 5px; padding-left: 10px; } }
@@ -280,7 +284,7 @@ dialog input, #emoji-search { border: 1px solid var(--line); border-radius: 0; b
 .reply-preview { border-radius: 0; }
 .reply-quote { border-radius: 0; }
 #suggestions, #emoji-picker { border: 2px solid var(--line); border-radius: 0; background: var(--side); }
-#suggestions button, #emoji-grid button, #emoji-search, #attachment-preview, .attachment-button { border-radius: 0; }
+#suggestions button, #emoji-grid button, #emoji-search, #attachment-preview, .attachment-button, .invite-card { border-radius: 0; }
 .attachment-thumb, .private-image, .private-video { border-radius: 0; }
 #verification-code { border-radius: 0; border-left: 3px solid var(--accent); }
 .faq-dialog h2 { font-size: 22px; }
@@ -413,7 +417,7 @@ dialog input, #emoji-search { border-radius: 7px; background: var(--side); }
 .unread { border-radius: 10px; }
 .reply-preview, .reply-quote { border-radius: 7px; }
 #suggestions, #emoji-picker { border-width: 1px; border-radius: 10px; background: var(--side); }
-#suggestions button, #emoji-grid button, #emoji-search, #attachment-preview, .attachment-button { border-radius: 7px; }
+#suggestions button, #emoji-grid button, #emoji-search, #attachment-preview, .attachment-button, .invite-card { border-radius: 7px; }
 .attachment-thumb, .private-image, .private-video { border-radius: 7px; }
 #verification-code { border-radius: 8px; border-left-width: 2px; }
 .faq-section h3 { text-transform: none; letter-spacing: 0; }

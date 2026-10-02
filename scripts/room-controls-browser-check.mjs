@@ -108,7 +108,19 @@ try {
   await d.locator('#command-status').filter({ hasText: 'History sharing is on' }).waitFor();
   await send(a, 'shared history sentinel');
   await c.locator('#group-dialog .close-dialog').click();
-  await c.goto(reusable); await c.locator('#group-join').click(); await ready(c);
+  // An invite link posted in a public room becomes a card with a join button.
+  const lobby = (await api(a, 'session')).data.rooms[0].id;
+  assert.equal((await api(a, 'message', { room: lobby, text: `Come join us: ${reusable}` })).status, 200);
+  const card = c.locator('.invite-card').filter({ hasText: 'Control room' });
+  await card.locator('small').filter({ hasText: /^Invite-only room · 3\/5 members$/ }).waitFor();
+  // Room changes refresh cards that are already on screen.
+  await a.locator('#group-details').click(); await a.locator('#group-locked').check(); await a.locator('#group-save').click();
+  await card.locator('small').filter({ hasText: /· Locked$/ }).waitFor();
+  await a.locator('#group-locked').uncheck(); await a.locator('#group-save').click(); await a.locator('#group-dialog .close-dialog').click();
+  await card.locator('small').filter({ hasText: /^Invite-only room · 3\/5 members$/ }).waitFor();
+  await card.getByRole('button', { name: 'View & join' }).click();
+  await c.locator('#group-join').filter({ hasText: 'Join with invite link' }).click(); await ready(c);
+  assert.equal(new URL(c.url()).hash, '');
   await c.locator('.chat-message').filter({ hasText: 'shared history sentinel' }).filter({ hasText: '(earlier message)' }).waitFor();
   assert.equal(await c.getByText('moderator one', { exact: true }).count(), 0);
   await c.reload(); await c.locator('#groups .group-room').click(); await ready(c);

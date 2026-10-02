@@ -91,7 +91,7 @@ async function refreshGroups() {
   const request = ++groupRefresh;
   try {
     const list = await api('groups'); if (request !== groupRefresh) return;
-    groupRooms = list; renderGroups();
+    groupRooms = list; renderGroups(); refreshInviteCards();
     if (current?.group && !list.some(g => g.id === current.group && g.joined)) closeCurrentGroup('This room is no longer available to you.');
     if (groupPanel && !groupPanel.inviteToken && !list.some(g => g.id === groupPanel.id && !g.blocked)) { $('#group-dialog').close(); groupPanel = null; }
   } catch(e) { error(e.message); }
@@ -241,12 +241,59 @@ async function openInviteLink() {
   else { try { hash = sessionStorage.getItem('silenza-invite') || ''; } catch { hash = ''; } }
   try { sessionStorage.removeItem('silenza-invite'); } catch {}
   const match = hash.match(/^#invite=([0-9a-f-]{36})\.([A-Za-z0-9_-]{10,64})$/);
-  if (!match) return;
+  if (match) await openInvite(match[1], match[2]);
+}
+async function openInvite(group, token) {
   try {
-    const preview = await api(`groups/invite-preview?${new URLSearchParams({ group: match[1], invite: match[2] })}`);
+    const preview = await invitePreview(group, token, true);
     if (preview.joined) await select({ group: preview.id });
-    else await openGroup({ ...preview, inviteToken: match[2] });
+    else await openGroup({ ...preview, inviteToken: token });
   } catch(e) { error(e.message); }
+}
+// Room invite links posted in chats become cards with a button, so nobody has to copy them into the address bar.
+const invitePattern = () => new RegExp(`${location.origin.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/chat/#invite=([0-9a-f-]{36})\\.([A-Za-z0-9_-]{10,64})(?![A-Za-z0-9_-])`, 'g');
+const invitePreviews = new Map();
+function invitePreview(group, token, refresh = false) {
+  const key = `${group}.${token}`;
+  if (refresh || !invitePreviews.has(key)) {
+    const request = api(`groups/invite-preview?${new URLSearchParams({ group, invite: token })}`);
+    invitePreviews.set(key, request);
+    // The cache only spares re-renders; room changes refresh the visible cards.
+    request.catch(() => {}).finally(() => setTimeout(() => { if (invitePreviews.get(key) === request) invitePreviews.delete(key); }, 10000));
+  }
+  return invitePreviews.get(key);
+}
+function refreshInviteCards() {
+  invitePreviews.clear();
+  for (const card of document.querySelectorAll('.invite-card')) {
+    const { group, token } = card.dataset;
+    invitePreview(group, token).then(preview => fillInviteCard(card, preview), e => fillInviteCard(card, null, e.message));
+  }
+}
+function fillInviteCard(card, preview, problem) {
+  const [title, detail, button] = card.children;
+  title.textContent = preview?.name || 'Temporary room invite';
+  detail.textContent = problem || [preview.access === 'invite' ? 'Invite-only room' : 'Open room', `${preview.count}/${preview.limit} members`, preview.locked && 'Locked'].filter(Boolean).join(' · ');
+  button.disabled = Boolean(problem);
+  button.textContent = problem ? 'Unavailable' : preview.joined ? 'Open room' : 'View & join';
+}
+function renderInviteCards(message, container) {
+  const seen = new Set();
+  for (const [, group, token] of message.text.matchAll(invitePattern())) {
+    const key = `${group}.${token}`;
+    if (seen.has(key) || seen.size >= 3) continue;
+    seen.add(key);
+    const card = element('div', 'invite-card'), button = element('button', 'text-button', 'Loading…');
+    Object.assign(card.dataset, { group, token });
+    card.append(element('strong', '', 'Temporary room invite'), element('small', '', 'Checking the invite…'), button);
+    button.type = 'button'; button.disabled = true;
+    button.onclick = async () => {
+      button.disabled = true; await openInvite(group, token);
+      invitePreview(group, token).then(preview => fillInviteCard(card, preview), e => fillInviteCard(card, null, e.message));
+    };
+    invitePreview(group, token).then(preview => fillInviteCard(card, preview), e => fillInviteCard(card, null, e.message));
+    container.append(card);
+  }
 }
 function setupGroups() {
   $('#moderate-group-form').onsubmit = async event => {
