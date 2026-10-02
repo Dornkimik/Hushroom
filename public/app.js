@@ -110,7 +110,7 @@ function updateHeading() {
   $('#room-symbol').textContent = privateChat ? '↗' : '#';
   $('#conversation-type').textContent = room?.adminOnly ? 'OFFICIAL COMMUNITY UPDATES' : groupChat ? [`Temporary room · ${room?.access === 'invite' ? 'Invite only' : 'Open'}`, room?.count && `${room.count} ${room.count === 1 ? 'member' : 'members'}`,
     room?.locked && 'Locked', room?.readOnly && 'Staff posts only', room?.slowMode && `Slow mode ${room.slowMode < 60 ? `${room.slowMode}s` : `${room.slowMode / 60} min`}`,
-    room?.disappear && `Messages disappear after ${room.disappear < 60 ? `${room.disappear} min` : `${room.disappear / 60} h`}`].filter(Boolean).join(' · ') : privateChat ? 'JUST BETWEEN YOU TWO' : 'COME AS YOU ARE';
+    room?.disappear && `Messages disappear after ${room.disappear < 60 ? `${room.disappear} min` : `${room.disappear / 60} h`}`, room?.shareHistory && 'History shared with new members'].filter(Boolean).join(' · ') : privateChat ? 'JUST BETWEEN YOU TWO' : 'COME AS YOU ARE';
   $('#announcement-note').hidden = !room?.adminOnly;
   $('#announcement-note').textContent = me.admin ? 'Only admins can post here. Announcements are saved until an admin removes them.' : 'Read-only: admins post updates here. Announcements are saved between restarts.';
   $('#room-badge').textContent = room?.adminOnly ? 'ANNOUNCEMENTS' : groupChat ? 'ENCRYPTED ROOM' : privateChat ? 'PRIVATE CHAT' : 'OPEN ROOM';
@@ -152,6 +152,7 @@ async function select(target) {
       const state = await api(`groups/state?group=${encodeURIComponent(target.group)}`);
       if (version !== revision) return;
       groupState = state; updateHeading();
+      if (state.pendingHistory) shareGroupHistory(state.id);
     }
     if (target.peer) {
       if (!encryptionClient) throw new Error(encryptionError || 'Private encryption is unavailable.');
@@ -167,6 +168,18 @@ async function select(target) {
     renderMessages();
   } catch (e) { if (version === revision) { error(e.message); if (target.peer || target.group) { peerIdentity = null; groupState = null; updateComposerState(e.message); } } }
 }
+// Adds room messages that another member shared with this member after they joined.
+async function loadSharedHistory(group) {
+  const version = revision;
+  try {
+    const known = new Set(messages.filter(m => !m.locked).map(m => `${m.id}:${m.editVersion || 0}`));
+    const fresh = (await api(`groups/history?${new URLSearchParams({ group })}`)).filter(m => validMessageRoute(m) && matches(m) && !known.has(`${m.id}:${m.editVersion || 0}`));
+    const decoded = await Promise.all(fresh.map(decodePrivate));
+    if (version !== revision || !decoded.length) return;
+    messages = [...new Map([...messages, ...decoded].map(m => [m.id, m])).values()].sort((a,b) => a.time.localeCompare(b.time)).slice(-100);
+    renderMessages();
+  } catch(e) { error(e.message); }
+}
 function renderMessages() {
   $('#messages').replaceChildren(...messages.map(message => {
     const own = message.sender === me.id;
@@ -181,6 +194,11 @@ function renderMessages() {
     replyButton.type = 'button'; replyButton.disabled = Boolean(message.locked) || (rooms.find(r => r.id === message.room)?.adminOnly && !me.admin); replyButton.onclick = () => { setReply(message); $('#message').focus(); };
     meta.append(replyButton);
     if (message.editedAt) meta.append(element('span', 'message-time', '(edited)'));
+    if (message.shared && !message.locked) {
+      const shared = element('span', 'message-time', '(earlier message)');
+      shared.title = 'Sent before you joined. Another member shared it with you, and the author’s signature was verified.';
+      meta.append(shared);
+    }
     // Encrypted messages carry the sender's own clock. Flag a large gap from the relay's timestamp.
     if (Number.isFinite(message.sentAt) && Math.abs(Date.parse(message.time) - message.sentAt) > 5 * 60000) {
       const skew = element('span', 'message-time', `(sender time ${new Date(message.sentAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })})`);
@@ -294,7 +312,7 @@ $('#edit-message-form').onsubmit = async event => {
     if (message.group) {
       const state = await api(`groups/message-edit-state?${new URLSearchParams({ group: message.group, id: message.id })}`);
       const envelopes = await encryptionClient.encryptGroup({ id: message.id, group: message.group, version: message.version, sender: me.id, text,
-        replyTo: message.reply?.id || null, file: message.file || null, editVersion, sentAt: message.sentAt ?? null }, state.members);
+        replyTo: message.reply?.id || null, file: message.file || null, editVersion, sentAt: message.sentAt ?? null, shareable: Boolean(message.shareable) }, state.members);
       result = await api('groups/message-edit', { group: message.group, id: message.id, membershipVersion: state.membershipVersion, editVersion, envelopes });
     } else if (message.encrypted) {
       const person = await encryptionClient.peer(message.recipient);
@@ -319,7 +337,7 @@ function updateComposerState(problem) {
   $('#attach-file').hidden = !privateChat && !groupChat; $('#attach-file').disabled = !(groupChat ? groupReady : ready) || sending || filePreparing;
   $('#verify-identity').disabled = !ready;
   $('#verify-identity').hidden = groupChat;
-  if (groupChat) $('#encryption-status').textContent = problem || groupBlock || (groupReady ? 'End-to-end encrypted · Verify members in Room details' : encryptionError || 'Preparing room encryption…');
+  if (groupChat) $('#encryption-status').textContent = problem || groupBlock || (groupReady ? `End-to-end encrypted${groupState.shareHistory ? ' · New members can read messages sent now' : ''} · Verify members in Room details` : encryptionError || 'Preparing room encryption…');
   if (privateChat) $('#encryption-status').textContent = problem || (ready ? `End-to-end encrypted · ${peerIdentity.verified ? 'Identity verified' : 'Identity not verified'}` : encryptionError || 'Waiting for private encryption…');
 }
 async function decodePrivate(message) {
@@ -540,8 +558,8 @@ $('#composer').onsubmit = async event => {
       uploadId = file?.id;
       const id = crypto.randomUUID();
       const envelopes = await encryptionClient.encryptGroup({ id, group: state.id, version: state.version, sender: me.id,
-        text: text.startsWith('//') ? text.slice(1) : text, replyTo: reply?.id || null, file }, state.members);
-      await receive(await api('groups/message', { group: state.id, version: state.version, id, envelopes, replyTo: reply?.id, attachmentId: uploadId }));
+        text: text.startsWith('//') ? text.slice(1) : text, replyTo: reply?.id || null, file, shareable: Boolean(state.shareHistory) }, state.members);
+      await receive(await api('groups/message', { group: state.id, version: state.version, id, envelopes, replyTo: reply?.id, attachmentId: uploadId, shareable: Boolean(state.shareHistory) }));
       uploadId = null; status('');
       if (pendingFile === pending) clearPendingFile();
     } else if (target.peer) {
@@ -748,6 +766,7 @@ async function start() {
     stream.addEventListener('session', event => updateSession(JSON.parse(event.data)));
     stream.addEventListener('groups-changed', () => { refreshGroups(); refreshAdminState(); });
     stream.addEventListener('group-state', event => groupStateChanged(JSON.parse(event.data)));
+    stream.addEventListener('history-shared', event => { const { group } = JSON.parse(event.data); if (current?.group === group) loadSharedHistory(group); });
     stream.addEventListener('group-removed', event => {
       const removed = JSON.parse(event.data); drafts.delete(`group:${removed.group}`);
       if (current?.group === removed.group) closeCurrentGroup(removed.reason);

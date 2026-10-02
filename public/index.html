@@ -63,7 +63,7 @@
   </dialog>
   <dialog id="group-dialog" aria-labelledby="group-dialog-title">
     <div class="dialog-heading"><h2 id="group-dialog-title">Create a temporary room</h2><button class="close-dialog" type="button" aria-label="Close room details">×</button></div>
-    <p class="group-hint">End-to-end encrypted messages and attachments for up to 20 members. Rooms expire after a period without activity chosen by the owner (24 hours at most) or when the server restarts. New members see only messages sent after they join.</p>
+    <p class="group-hint">End-to-end encrypted messages and attachments for up to 20 members. Rooms expire after a period without activity chosen by the owner (24 hours at most) or when the server restarts. New members see only messages sent after they join, unless the owner turns on history sharing.</p>
     <form id="group-form">
       <label for="group-name">Room name</label><input id="group-name" maxlength="40" required>
       <label for="group-description">Description <span>(optional)</span></label><input id="group-description" maxlength="120">
@@ -79,7 +79,8 @@
       </div>
       <label class="sound-choice"><input id="group-read-only" type="checkbox"> Only the owner and moderators can post</label>
       <label class="sound-choice"><input id="group-locked" type="checkbox"> Lock the room so no new members can join</label>
-      <p class="group-hint">Slow mode does not apply to the owner and moderators. Disappearing messages are deleted for everyone once they reach the chosen age.</p>
+      <label class="sound-choice"><input id="group-share-history" type="checkbox"> New members can read messages sent while this is on</label>
+      <p class="group-hint">Slow mode does not apply to the owner and moderators. Disappearing messages are deleted for everyone once they reach the chosen age. With history sharing on, members’ browsers re-encrypt the recent messages for each newcomer, and the author’s signature proves nothing was changed. Messages sent while it is off are never shared, even if it is turned on later.</p>
       <button id="group-save" class="primary" type="submit">Create room</button>
     </form>
     <button id="group-join" class="primary" type="button" hidden>Join encrypted room</button>

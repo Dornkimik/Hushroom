@@ -1,7 +1,32 @@
 let groupRooms = [], groupState = null, groupPanel = null, groupRefresh = 0, muteTimer = 0;
 let adminGroups = [], moderatingGroup = null;
 const roleRank = { member: 0, moderator: 1, owner: 2 };
-const groupDefaults = { limit: 20, slowMode: 0, lifetime: 24, disappear: 0, readOnly: false, locked: false };
+const groupDefaults = { limit: 20, slowMode: 0, lifetime: 24, disappear: 0, readOnly: false, locked: false, shareHistory: false };
+const sharingGroups = new Set();
+// Re-encrypts shareable room history for members who joined later. Every online member may try;
+// a random delay spreads the work, and the server skips copies someone else already shared.
+async function shareGroupHistory(group) {
+  if (!encryptionClient || sharingGroups.has(group)) return;
+  sharingGroups.add(group);
+  try {
+    await new Promise(resolve => setTimeout(resolve, 300 + Math.random() * 1500));
+    const work = await api(`groups/history-share-state?group=${encodeURIComponent(group)}`);
+    if (!work.messages.length) return;
+    const history = new Map((await api(`groups/history?group=${encodeURIComponent(group)}`)).map(m => [m.id, m]));
+    const members = new Map(work.members.map(m => [m.id, m]));
+    let batch = [];
+    for (const item of work.messages) {
+      const message = history.get(item.id); if (!message) continue;
+      // A message that fails to decrypt or verify is skipped rather than passed on.
+      try {
+        const copies = await encryptionClient.shareGroup(message, item.members.map(id => members.get(id)).filter(Boolean));
+        for (const [member, encrypted] of Object.entries(copies)) batch.push({ id: item.id, member, encrypted });
+      } catch {}
+      if (batch.length >= 15) { await api('groups/history-share', { group, shares: batch }); batch = []; }
+    }
+    if (batch.length) await api('groups/history-share', { group, shares: batch });
+  } catch {} finally { sharingGroups.delete(group); }
+}
 const groupRole = (group, id) => group?.owner === id ? 'owner' : group?.moderators?.includes(id) ? 'moderator' : 'member';
 const isGroupStaff = group => groupRole(group, me.id) !== 'member';
 // Moderators manage regular members; the owner manages everyone else.
@@ -78,7 +103,11 @@ function closeCurrentGroup(reason) {
 function groupStateChanged(state) {
   const index = groupRooms.findIndex(g => g.id === state.id);
   if (index !== -1) groupRooms[index] = { ...groupRooms[index], ...state };
+  if (current?.group === state.id && groupState && Boolean(groupState.shareHistory) !== Boolean(state.shareHistory)) {
+    status(state.shareHistory ? 'History sharing is on: people who join later can read messages sent from now on.' : 'History sharing is off: new messages stay with the current members.');
+  }
   if (current?.group === state.id) { groupState = state; updateHeading(); renderMessages(); }
+  if (state.pendingHistory && state.joined) shareGroupHistory(state.id);
   if (groupPanel?.id === state.id) { groupPanel = state; renderGroupMembers(); groupPermissions(); }
   renderGroups();
 }
@@ -89,7 +118,7 @@ function fillGroupForm(group) {
   const values = { ...groupDefaults, ...Object.fromEntries(Object.keys(groupDefaults).filter(k => group?.[k] !== undefined).map(k => [k, group[k]])) };
   $('#group-limit').value = values.limit; $('#group-slow-mode').value = values.slowMode;
   $('#group-lifetime').value = values.lifetime; $('#group-disappear').value = values.disappear;
-  $('#group-read-only').checked = values.readOnly; $('#group-locked').checked = values.locked;
+  $('#group-read-only').checked = values.readOnly; $('#group-locked').checked = values.locked; $('#group-share-history').checked = values.shareHistory;
 }
 async function openGroup(group = null) {
   $('#group-error').textContent = '';
@@ -97,13 +126,13 @@ async function openGroup(group = null) {
     groupPanel = group?.joined ? await api(`groups/state?group=${encodeURIComponent(group.id)}`) : group;
     fillGroupForm(groupPanel);
     $('#group-dialog-title').textContent = groupPanel ? 'Room details & members' : 'Create a temporary room';
-    groupPermissions(); renderGroupMembers(); $('#group-dialog').showModal();
+    groupPermissions(); renderGroupMembers(); if (!$('#group-dialog').open) $('#group-dialog').showModal();
   } catch(e) { error(e.message); }
 }
 function groupPermissions() {
   const owner = groupPanel?.owner === me.id, creating = !groupPanel, staff = Boolean(groupPanel?.joined) && isGroupStaff(groupPanel);
   for (const id of ['group-name', 'group-description', 'group-rules', 'group-limit']) $(`#${id}`).readOnly = !creating && !owner;
-  for (const id of ['group-access', 'group-slow-mode', 'group-lifetime', 'group-disappear', 'group-read-only', 'group-locked']) $(`#${id}`).disabled = !creating && !owner;
+  for (const id of ['group-access', 'group-slow-mode', 'group-lifetime', 'group-disappear', 'group-read-only', 'group-locked', 'group-share-history']) $(`#${id}`).disabled = !creating && !owner;
   $('#group-save').hidden = !creating && !owner;
   $('#group-save').textContent = creating ? 'Create room' : 'Save changes';
   $('#group-join').hidden = creating || groupPanel.joined;
@@ -236,7 +265,7 @@ function setupGroups() {
     event.preventDefault(); const button = $('#group-save'); button.disabled = true;
     const details = { name: $('#group-name').value, description: $('#group-description').value, rules: $('#group-rules').value, access: $('#group-access').value,
       limit: Number($('#group-limit').value), slowMode: Number($('#group-slow-mode').value), lifetime: Number($('#group-lifetime').value),
-      disappear: Number($('#group-disappear').value), readOnly: $('#group-read-only').checked, locked: $('#group-locked').checked };
+      disappear: Number($('#group-disappear').value), readOnly: $('#group-read-only').checked, locked: $('#group-locked').checked, shareHistory: $('#group-share-history').checked };
     try {
       if (groupPanel) await groupAction('update', details);
       else {
@@ -251,6 +280,5 @@ function setupGroups() {
   $('#group-delete').onclick = () => { if (confirm('Delete this temporary room and all its messages for everyone?')) groupAction('delete'); };
   $('#group-invite-form').onsubmit = event => { event.preventDefault(); groupAction('invite', { member: $('#group-invite-person').value }); };
   $('#group-link-form').onsubmit = event => { event.preventDefault(); groupAction('link-create', { hours: Number($('#group-link-hours').value), uses: Number($('#group-link-uses').value) }); };
-  $('#group-dialog').onclose = () => { if (groupPanel?.inviteToken) groupPanel = null; };
   window.addEventListener('hashchange', () => { if (location.hash.startsWith('#invite=')) openInviteLink(); });
 }

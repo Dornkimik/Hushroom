@@ -287,7 +287,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/groups' || url.pathname.startsWith('/api/groups/')) {
       const action = url.pathname.slice('/api/groups'.length).replace(/^\//, '');
       if (req.method === 'POST' && ['message', 'message-edit'].includes(action)) security.message(session.clientKey);
-      const input = req.method === 'POST' ? await body(req, ['message', 'message-edit'].includes(action) ? 512000 : 32768) : Object.fromEntries(url.searchParams);
+      const input = req.method === 'POST' ? await body(req, ['message', 'message-edit', 'history-share'].includes(action) ? 512000 : 32768) : Object.fromEntries(url.searchParams);
       // Recheck after reading the request, since a ban may occur during a slow upload.
       if (sessions.get(token) !== session) fail(403, 'This session is no longer available.');
       json(groups.handle(req.method, action, session, input)); return;
@@ -297,7 +297,7 @@ const server = http.createServer(async (req, res) => {
       const peer = [...sessions.values()].find(s => s.id === url.searchParams.get('peer'));
       if (peer) ensurePrivateAllowed(session, peer);
       if (!peer?.publicKey) fail(409, 'This person has not enabled private encryption yet. They need to open or refresh SilenzaChat.');
-      json({ id: peer.id, publicKey: peer.publicKey }); return;
+      json({ id: peer.id, publicKey: peer.publicKey, ...(peer.signKey ? { signKey: peer.signKey } : {}) }); return;
     }
     if (url.pathname === '/api/attachments' && req.method === 'POST') {
       if (url.searchParams.has('group')) {
@@ -430,6 +430,10 @@ const server = http.createServer(async (req, res) => {
       const bytes = base64Bytes(input.publicKey, 32);
       if (!bytes || nacl.scalarMult(new Uint8Array(32).fill(42), bytes).every(x => x === 0)) fail(400, 'Invalid public encryption key.');
       if (session.publicKey && session.publicKey !== input.publicKey) fail(409, 'Your local encryption key does not match this session. Start a new browser session to chat privately.');
+      // The signing key (for shareable room history) is optional for older clients and fixed once set.
+      if (input.signKey !== undefined && !base64Bytes(input.signKey, 32)) fail(400, 'Invalid public signing key.');
+      if (session.signKey && input.signKey !== undefined && session.signKey !== input.signKey) fail(409, 'Your local encryption key does not match this session. Start a new browser session to chat privately.');
+      if (input.signKey !== undefined) session.signKey = input.signKey;
       const first = !session.publicKey; session.publicKey = input.publicKey;
       if (first) broadcast('identity-ready', { id: session.id });
       json({ ok: true }); return;

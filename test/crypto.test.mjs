@@ -53,6 +53,13 @@ test('verification codes are symmetric and bind session IDs and keys', () => {
   assert.equal(crypto.verificationCode(a, b), crypto.verificationCode(b, a));
   assert.notEqual(crypto.verificationCode(a, b), crypto.verificationCode(a, { ...b, id: 'replacement' }));
   assert.notEqual(crypto.verificationCode(a, b), crypto.verificationCode(a, { ...b, publicKey: key(nacl.box.keyPair()) }));
+  // With signing keys on both sides, the code also binds them.
+  const signKey = () => crypto.base64(nacl.sign.keyPair().publicKey);
+  const as = { ...a, signKey: signKey() }, bs = { ...b, signKey: signKey() };
+  assert.equal(crypto.verificationCode(as, bs), crypto.verificationCode(bs, as));
+  assert.notEqual(crypto.verificationCode(as, bs), crypto.verificationCode(a, b));
+  assert.notEqual(crypto.verificationCode(as, bs), crypto.verificationCode(as, { ...bs, signKey: signKey() }));
+  assert.equal(crypto.verificationCode(as, b), crypto.verificationCode(a, b));
 });
 
 test('attachment expiry, abandoned uploads, ownership and quotas', async () => {

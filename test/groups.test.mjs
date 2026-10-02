@@ -10,7 +10,8 @@ import { Readable } from 'node:stream';
 function setup() {
   let time = Date.now(); const events = [];
   const users = ['a', 'b', 'c', 'd'].map(alias => {
-    const identity = nacl.box.keyPair(); return { id: randomUUID(), alias, identity, publicKey: crypto.base64(identity.publicKey), sent: [] };
+    const identity = nacl.box.keyPair(), signing = crypto.signingKeys(identity);
+    return { id: randomUUID(), alias, identity, signing, publicKey: crypto.base64(identity.publicKey), signKey: crypto.base64(signing.publicKey), sent: [] };
   });
   const attachments = new Attachments({ now: () => time });
   const store = new Groups({ isAdmin: u => u.role === 'admin', attachments, now: () => time, emit: (u, event, data) => events.push({ user: u.id, event, data }), broadcast: () => {},
@@ -18,7 +19,9 @@ function setup() {
   const call = (u, action, input = {}, method = 'POST') => store.handle(method, action, u, input);
   const send = (u, group, text = 'secret group sentinel', replyTo) => {
     const state = call(u, 'state', { group }, 'GET'), id = randomUUID();
-    return { group, id, version: state.version, replyTo, envelopes: crypto.encryptGroupMessage({ id, group, version: state.version, sender: u.id, text, replyTo }, u.identity, state.members) };
+    const shareable = Boolean(state.shareHistory);
+    return { group, id, version: state.version, replyTo, ...(shareable ? { shareable } : {}),
+      envelopes: crypto.encryptGroupMessage({ id, group, version: state.version, sender: u.id, text, replyTo, shareable }, u.identity, state.members, u.signing) };
   };
   return { store, attachments, users, events, call, send, advance: ms => { time += ms; } };
 }
@@ -386,4 +389,100 @@ test('disappearing messages are removed for everyone and from history', () => {
   assert.ok(events.some(e => e.user === b.id && e.event === 'message-removed' && e.data.id === old.id));
   advance(4 * 60000); store.sweep();
   assert.equal(store.get(group).history.length, 0); assert.equal(store.bytes, 0);
+});
+
+test('history sharing lets later members read messages sent while it was on, verified by the author signature', async () => {
+  const { store, attachments, users: [a,b,c,d], events, call, send } = setup();
+  const open = (m, u) => m.shared ? crypto.decryptGroupShare(m, u.id, u.identity, m.shared.sharerKey, m.senderSignKey) : crypto.decryptGroupMessage(m, u.id, u.identity, m.senderKey, m.senderSignKey);
+  // What a member's browser does: re-encrypt every message it can read for the members who cannot.
+  const shareFrom = (sharer, group) => {
+    const work = call(sharer, 'history-share-state', { group }, 'GET');
+    const views = new Map(call(sharer, 'history', { group }, 'GET').map(m => [m.id, m])), keys = new Map(work.members.map(m => [m.id, m]));
+    const shares = work.messages.flatMap(item => {
+      const view = views.get(item.id), plain = open(view, sharer);
+      return item.members.map(id => ({ id: item.id, member: id, encrypted: crypto.encryptGroupShare(view, plain, plain.history, sharer.id, sharer.identity, keys.get(id)) }));
+    });
+    return call(sharer, 'history-share', { group, shares });
+  };
+  const consistent = group => { assert.equal(store.bytes, store.get(group).bytes); assert.equal(store.bytes, store.get(group).history.reduce((sum, m) => sum + m.bytes, 0)); };
+  const group = call(a, 'create', { name: 'Shared' }).id; call(b, 'join', { group });
+  const before = call(a, 'message', send(a, group, 'before sharing'));
+  assert.throws(() => call(a, 'create', { name: 'Bad', shareHistory: 'yes' }), /setting/);
+  call(a, 'update', { group, name: 'Shared', shareHistory: true });
+  const unflagged = send(a, group, 'unflagged'); delete unflagged.shareable;
+  assert.throws(() => call(a, 'message', unflagged), /history setting changed/);
+  assert.throws(() => call({ ...a, signKey: undefined }, 'message', send(a, group)), /Reload/);
+  const m1 = call(a, 'message', send(a, group, 'shared hello'));
+  assert.equal(m1.shareable, true); assert.equal(m1.senderSignKey, a.signKey); assert.equal(m1.shares, undefined);
+  const m2 = call(b, 'message', send(b, group, 'reply from b', m1.id));
+  // Original recipients check the signature and the shareable flag.
+  assert.equal(open(m1, a).text, 'shared hello');
+  assert.throws(() => crypto.decryptGroupMessage(m1, a.id, a.identity, a.publicKey, c.signKey), /could not be verified/);
+  assert.throws(() => crypto.decryptGroupMessage({ ...m1, shareable: false }, a.id, a.identity, a.publicKey, a.signKey), /metadata/);
+  assert.throws(() => crypto.decryptGroupMessage({ ...before, shareable: true }, a.id, a.identity, a.publicKey, a.signKey), /metadata/);
+
+  call(c, 'join', { group });
+  assert.equal(call(c, 'state', { group }, 'GET').pendingHistory, true);
+  assert.deepEqual(call(c, 'history', { group }, 'GET'), []);
+  assert.deepEqual(call(c, 'history-share-state', { group }, 'GET').messages, []);
+  const work = call(b, 'history-share-state', { group }, 'GET');
+  assert.deepEqual(work.messages.map(m => m.id), [m1.id, m2.id]); assert.deepEqual(work.members.map(m => m.id), [c.id]);
+  assert.throws(() => call(b, 'history-share', { group, shares: [{ id: before.id, member: c.id, encrypted: m1.encrypted }] }), /sent while sharing was on/);
+  assert.throws(() => call(c, 'history-share', { group, shares: [{ id: m1.id, member: c.id, encrypted: m1.encrypted }] }), /you can read/);
+  assert.throws(() => call(b, 'history-share', { group, shares: [{ id: m1.id, member: c.id, encrypted: m1.encrypted, text: 'plain' }] }), /Invalid/);
+
+  // A member who changes the text cannot produce a valid author signature.
+  const plain = open(call(b, 'history', { group }, 'GET').find(m => m.id === m1.id), b);
+  const forged = crypto.encryptGroupShare(m1, { ...plain, text: 'forged' }, plain.history, b.id, b.identity, c);
+  const view = { ...m1, encrypted: undefined, shared: { by: b.id, sharerKey: b.publicKey, encrypted: forged } };
+  assert.throws(() => crypto.decryptGroupShare(view, c.id, c.identity, b.publicKey, a.signKey), /could not be verified/);
+  assert.throws(() => crypto.decryptGroupShare({ ...view, shared: { ...view.shared, by: a.id } }, c.id, c.identity, b.publicKey, a.signKey), /metadata/);
+
+  assert.equal(shareFrom(b, group).stored, 2);
+  assert.equal(shareFrom(a, group).stored, 0);
+  assert.ok(events.some(e => e.user === c.id && e.event === 'history-shared'));
+  assert.equal(call(c, 'state', { group }, 'GET').pendingHistory, false);
+  const seen = call(c, 'history', { group }, 'GET');
+  assert.deepEqual(seen.map(m => open(m, c).text), ['shared hello', 'reply from b']);
+  assert.ok(seen.every(m => m.shared?.by === b.id && m.encrypted === undefined && m.shares === undefined));
+  assert.ok(!JSON.stringify(call(b, 'history', { group }, 'GET')).includes(c.id));
+  call(c, 'message', send(c, group, 'replying to history', m1.id));
+  consistent(group);
+
+  // Edits replace shared copies, which members then share again.
+  const editState = call(a, 'message-edit-state', { group, id: m1.id }, 'GET');
+  assert.deepEqual(editState.members.map(m => m.id).sort(), [a.id, b.id].sort());
+  call(a, 'message-edit', { group, id: m1.id, membershipVersion: editState.membershipVersion, editVersion: 1,
+    envelopes: crypto.encryptGroupMessage({ id: m1.id, group, version: m1.version, sender: a.id, text: 'edited hello', editVersion: 1, shareable: true }, a.identity, editState.members, a.signing) });
+  assert.equal(call(c, 'state', { group }, 'GET').pendingHistory, true);
+  assert.ok(!call(c, 'history', { group }, 'GET').some(m => m.id === m1.id));
+  shareFrom(a, group);
+  assert.equal(open(call(c, 'history', { group }, 'GET').find(m => m.id === m1.id), c).text, 'edited hello');
+  consistent(group);
+
+  // Shared attachments become downloadable for the later member.
+  const upload = await attachments.upload(Readable.from([new Uint8Array(64)]), a.id, null, { group, version: store.get(group).version });
+  const file = { id: upload.id, kind: 'file', type: 'application/octet-stream', size: 48, key: crypto.base64(nacl.randomBytes(32)), nonce: crypto.base64(nacl.randomBytes(24)), name: 'notes.bin' };
+  const state = call(a, 'state', { group }, 'GET'), fileId = randomUUID();
+  call(a, 'message', { group, id: fileId, version: state.version, attachmentId: upload.id, shareable: true,
+    envelopes: crypto.encryptGroupMessage({ id: fileId, group, version: state.version, sender: a.id, text: '', file, shareable: true }, a.identity, state.members, a.signing) });
+  call(d, 'join', { group });
+  assert.throws(() => attachments.get(upload.id, d.id), /unavailable/);
+  shareFrom(c, group);
+  assert.deepEqual(open(call(d, 'history', { group }, 'GET').find(m => m.id === fileId), d).file, file);
+  store.checkAttachment(attachments.get(upload.id, d.id), d);
+
+  // Leaving drops a member's shared copies; rejoining makes them pending again.
+  call(d, 'leave', { group }); consistent(group);
+  assert.ok(store.get(group).history.every(m => !m.shares || !Object.hasOwn(m.shares, d.id)));
+  assert.throws(() => store.checkAttachment(attachments.items.get(upload.id), d), /unavailable/);
+  call(d, 'join', { group });
+  assert.equal(call(d, 'state', { group }, 'GET').pendingHistory, true);
+  // Turning sharing off keeps earlier shareable messages shareable but stops new ones.
+  call(a, 'update', { group, name: 'Shared', shareHistory: false });
+  const after = call(a, 'message', send(a, group, 'after sharing'));
+  assert.equal(after.shareable, undefined);
+  shareFrom(b, group);
+  assert.deepEqual(call(d, 'history', { group }, 'GET').map(m => m.id), [m1.id, m2.id, call(c, 'history', { group }, 'GET')[2].id, fileId, after.id]);
+  consistent(group);
 });

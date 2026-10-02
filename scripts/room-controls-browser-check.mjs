@@ -100,12 +100,28 @@ try {
   await c.goto(reusable); await c.locator('#group-join').click();
   await c.locator('#group-error').filter({ hasText: /locked/ }).waitFor();
 
+  // History sharing: later members read messages sent while it is on, and nothing from before.
+  await a.locator('#group-read-only').uncheck(); await a.locator('#group-locked').uncheck(); await a.locator('#group-share-history').check(); await a.locator('#group-save').click();
+  await a.locator('#group-dialog .close-dialog').click();
+  await a.locator('#encryption-status').filter({ hasText: 'New members can read messages sent now' }).waitFor();
+  assert.match(await a.locator('#conversation-type').textContent(), /History shared with new members/);
+  await d.locator('#command-status').filter({ hasText: 'History sharing is on' }).waitFor();
+  await send(a, 'shared history sentinel');
+  await c.locator('#group-dialog .close-dialog').click();
+  await c.goto(reusable); await c.locator('#group-join').click(); await ready(c);
+  await c.locator('.chat-message').filter({ hasText: 'shared history sentinel' }).filter({ hasText: '(earlier message)' }).waitFor();
+  assert.equal(await c.getByText('moderator one', { exact: true }).count(), 0);
+  await c.reload(); await c.locator('#groups .group-room').click(); await ready(c);
+  await c.locator('.chat-message').filter({ hasText: 'shared history sentinel' }).waitFor();
+  await send(c, 'newcomer reply'); await a.getByText('newcomer reply', { exact: true }).waitFor();
+
   // The longer dialog still fits a phone screen without horizontal scrolling.
+  await a.locator('#group-details').click(); await a.locator('#group-save').waitFor();
   await a.setViewportSize({ width: 375, height: 812 });
   assert.equal(await a.evaluate(() => document.querySelector('#group-dialog').scrollWidth <= document.querySelector('#group-dialog').clientWidth), true);
   assert.equal(await a.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   assert.deepEqual(errors, []);
-  console.log('PASS: room settings, invite links (single-use, reusable, across sign-in), moderators, mute, slow mode, message removal, ban/unban, staff-only posting, lock, phone layout');
+  console.log('PASS: room settings, invite links (single-use, reusable, across sign-in), moderators, mute, slow mode, message removal, ban/unban, staff-only posting, lock, history sharing, phone layout');
 } finally {
   await browser?.close(); server.kill(); await rm(data, { recursive: true, force: true });
 }
