@@ -13,6 +13,7 @@
     "test:editing:browser": "node scripts/editing-browser-check.mjs",
     "test:browser": "node scripts/browser-check.mjs",
     "test:groups:browser": "node scripts/group-browser-check.mjs",
+    "test:room-controls:browser": "node scripts/room-controls-browser-check.mjs",
     "test:feedback:browser": "node scripts/feedback-browser-check.mjs"
   },
   "engines": {

@@ -113,7 +113,7 @@ try {
   assert.equal((await api(a, 'groups/kick', { group, member: uc.id })).status, 403);
   await b.locator('#group-details').click(); await b.locator('#group-save').waitFor({ state: 'visible' });
   assert.match(await memberRow(b, uc.alias).textContent(), /1 message sent/);
-  await memberRow(b, uc.alias).getByRole('button', { name: 'Kick', exact: true }).click();
+  await memberRow(b, uc.alias).getByRole('button', { name: 'Ban', exact: true }).click();
   await c.waitForFunction(() => document.querySelector('#room-title').textContent !== 'Evening circle');
   assert.equal(await c.getByText('hello from new member', { exact: true }).count(), 0);
   assert.equal((await api(c, 'groups/join', { group })).status, 403);

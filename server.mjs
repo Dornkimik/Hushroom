@@ -306,7 +306,7 @@ const server = http.createServer(async (req, res) => {
         if (!session.publicKey || version !== group.version) fail(409, 'Room membership changed. Try sending again.');
         if (req.headers['content-type'] !== 'application/octet-stream') fail(415, 'Upload encrypted attachment bytes only.');
         const uploaded = await attachments.upload(req, session.id, null, { group: group.id, version }, session.clientKey, contentLength(req));
-        if (sessions.get(token) !== session || groups.rooms.get(group.id) !== group || group.updated + 86400000 <= Date.now() || !group.members.has(session.id) || group.version !== version) {
+        if (sessions.get(token) !== session || groups.rooms.get(group.id) !== group || groups.expired(group) || !group.members.has(session.id) || group.version !== version) {
           attachments.remove(uploaded.id); fail(409, 'Room membership changed during upload. Try sending again.');
         }
         json(uploaded); return;

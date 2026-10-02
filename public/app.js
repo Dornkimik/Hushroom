@@ -108,7 +108,9 @@ function updateHeading() {
   $('#room-description').textContent = privateChat ? 'A conversation just between the two of you.' : room?.description || (groupChat ? '' : 'Choose a room or someone to talk to.');
   $('#room-description').hidden = groupChat && !room?.description;
   $('#room-symbol').textContent = privateChat ? '↗' : '#';
-  $('#conversation-type').textContent = room?.adminOnly ? 'OFFICIAL COMMUNITY UPDATES' : groupChat ? `Temporary room · ${room?.access === 'invite' ? 'Invite only' : 'Open'}${room?.count ? ` · ${room.count} ${room.count === 1 ? 'member' : 'members'}` : ''}` : privateChat ? 'JUST BETWEEN YOU TWO' : 'COME AS YOU ARE';
+  $('#conversation-type').textContent = room?.adminOnly ? 'OFFICIAL COMMUNITY UPDATES' : groupChat ? [`Temporary room · ${room?.access === 'invite' ? 'Invite only' : 'Open'}`, room?.count && `${room.count} ${room.count === 1 ? 'member' : 'members'}`,
+    room?.locked && 'Locked', room?.readOnly && 'Staff posts only', room?.slowMode && `Slow mode ${room.slowMode < 60 ? `${room.slowMode}s` : `${room.slowMode / 60} min`}`,
+    room?.disappear && `Messages disappear after ${room.disappear < 60 ? `${room.disappear} min` : `${room.disappear / 60} h`}`].filter(Boolean).join(' · ') : privateChat ? 'JUST BETWEEN YOU TWO' : 'COME AS YOU ARE';
   $('#announcement-note').hidden = !room?.adminOnly;
   $('#announcement-note').textContent = me.admin ? 'Only admins can post here. Announcements are saved until an admin removes them.' : 'Read-only: admins post updates here. Announcements are saved between restarts.';
   $('#room-badge').textContent = room?.adminOnly ? 'ANNOUNCEMENTS' : groupChat ? 'ENCRYPTED ROOM' : privateChat ? 'PRIVATE CHAT' : 'OPEN ROOM';
@@ -197,7 +199,7 @@ function renderMessages() {
       };
       meta.append(edit);
     }
-    if (own || (message.group ? groupState?.owner === me.id : me?.admin)) {
+    if (own || (message.group ? groupState && canManage(groupState, message.sender) : me?.admin)) {
       const remove = element('button', 'message-remove', own ? 'Delete' : 'Remove');
       remove.type = 'button'; remove.title = 'Remove this message for everyone';
       remove.onclick = async () => { remove.disabled = true; try { applyRemoval(await api(message.group ? 'groups/message-delete' : own ? 'message/delete' : 'admin/remove-message', { id: message.id, ...(message.group ? { group: message.group } : {}) })); } catch(e) { error(e.message); remove.disabled = false; } };
@@ -308,14 +310,16 @@ $('#edit-message-form').onsubmit = async event => {
 function updateComposerState(problem) {
   const privateChat = Boolean(current?.peer), ready = Boolean(encryptionClient && peerIdentity?.id === current?.peer);
   const groupChat = Boolean(current?.group), groupReady = Boolean(encryptionClient && groupState?.id === current?.group && groupState?.joined);
-  $('#message').disabled = !current || (rooms.find(r => r.id === current?.room)?.adminOnly && !me.admin) || (privateChat && !ready) || (groupChat && !groupReady);
+  const groupBlock = groupChat && groupReady ? groupPostBlock(groupState) : '';
+  if (groupChat) scheduleMuteCheck(groupState);
+  $('#message').disabled = !current || (rooms.find(r => r.id === current?.room)?.adminOnly && !me.admin) || (privateChat && !ready) || (groupChat && (!groupReady || Boolean(groupBlock)));
   $('#message').required = !pendingFile;
   $('.send-button').disabled = $('#message').disabled || sending || filePreparing;
   $('#emoji-toggle').disabled = $('#message').disabled;
   $('#attach-file').hidden = !privateChat && !groupChat; $('#attach-file').disabled = !(groupChat ? groupReady : ready) || sending || filePreparing;
   $('#verify-identity').disabled = !ready;
   $('#verify-identity').hidden = groupChat;
-  if (groupChat) $('#encryption-status').textContent = problem || (groupReady ? 'End-to-end encrypted · Verify members in Room details' : encryptionError || 'Preparing room encryption…');
+  if (groupChat) $('#encryption-status').textContent = problem || groupBlock || (groupReady ? 'End-to-end encrypted · Verify members in Room details' : encryptionError || 'Preparing room encryption…');
   if (privateChat) $('#encryption-status').textContent = problem || (ready ? `End-to-end encrypted · ${peerIdentity.verified ? 'Identity verified' : 'Identity not verified'}` : encryptionError || 'Waiting for private encryption…');
 }
 async function decodePrivate(message) {
@@ -723,7 +727,11 @@ $('#confirm-ban').onclick = async () => { $('#confirm-ban').disabled = true; try
 async function start() {
   try {
     const auth = await api('auth/status');
-    if (!auth.me) { location.replace('/#entry'); return; }
+    if (!auth.me) {
+      // Keep a room invite link across sign-in; the entry page returns to /chat/ without the fragment.
+      if (location.hash.startsWith('#invite=')) try { sessionStorage.setItem('silenza-invite', location.hash); } catch {}
+      location.replace('/#entry'); return;
+    }
     const data = await api('session'); me = data.me; rooms = data.rooms; if (Number.isSafeInteger(data.attachmentLimit)) attachmentLimit = data.attachmentLimit; people = data.people; blockedUsers = data.blocks || []; hiddenChats = new Set(data.hiddenChats || []); renderBlockedUsers(); groupRooms = data.groups || [];
     $('#identity-kind').textContent = me.account ? 'Persistent account' : 'Guest identity'; $('#account-security').hidden = !me.account;
     try { encryptionClient = await SilenzaCrypto.createClient(me.id, api); } catch(e) { encryptionError = e.message; }
@@ -731,6 +739,7 @@ async function start() {
     $('#my-alias').textContent = me.alias; $('.me-avatar').textContent = me.alias.split(' ').slice(0,2).map(x => x[0]).join(''); setAdmin(me.admin); renderPeople(); renderAdminPeople();
     if (me.admin) await refreshAdminState();
     await select(rooms[0] ? { room: rooms[0].id } : null);
+    openInviteLink();
     stream = new EventSource('/api/events');
     stream.onopen = () => { $('#connection').textContent = 'Connected'; $('#connection').classList.add('live'); if (current) select(current); };
     stream.onerror = async () => { if (signingOut) return; $('#connection').textContent = 'Reconnecting…'; $('#connection').classList.remove('live'); try { const auth = await api('auth/status'); if (!signingOut && (!auth.me || auth.me.id !== me.id)) { stream.close(); location.replace('/#entry'); } } catch {} };

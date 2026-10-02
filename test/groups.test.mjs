@@ -105,7 +105,7 @@ test('temporary encrypted rooms enforce invitation, ownership, membership versio
   assert.equal(call(a, 'message', payload).id, message.id);
   assert.equal(call(a, 'state', { group }, 'GET').members.find(m => m.id === a.id).messages, 2);
   assert.ok(call(b, 'state', { group }, 'GET').members.every(m => !Object.hasOwn(m, 'messages')));
-  assert.throws(() => call(b, 'message-delete', { group, id: message.id }), /sender or room owner/);
+  assert.throws(() => call(b, 'message-delete', { group, id: message.id }), /sender, the room owner/);
   const reply = call(b, 'message', send(b, group, 'reply', message.id));
   call(a, 'message-delete', { group, id: message.id });
   const history = call(b, 'history', { group }, 'GET');
@@ -120,7 +120,7 @@ test('temporary encrypted rooms enforce invitation, ownership, membership versio
   const beforeKick = send(b, group);
   call(a, 'transfer', { group, member: b.id });
   assert.throws(() => call(a, 'kick', { group, member: c.id }), /owner/);
-  call(b, 'kick', { group, member: c.id });
+  call(b, 'ban', { group, member: c.id });
   assert.throws(() => call(b, 'message', beforeKick), /Membership changed/);
   assert.throws(() => call(c, 'join', { group }), /cannot rejoin/);
   assert.throws(() => call(c, 'history', { group }, 'GET'), /Join/);
@@ -245,4 +245,145 @@ test('editing group messages preserves original audience, ownership, replies, co
   call(a, 'message-delete', { group, id: message.id }); assert.equal(store.bytes, 0);
   assert.throws(() => call(a, 'message-edit', afterKick), /Your message/);
   advance(10001);
+});
+
+test('room moderators manage regular members only and inherit ownership before members', () => {
+  const { store, users: [a,b,c,d], call, send } = setup();
+  const group = call(a, 'create', { name: 'Moderated' }).id;
+  for (const u of [b, c, d]) call(u, 'join', { group });
+  assert.throws(() => call(b, 'promote', { group, member: c.id }), /owner/);
+  call(a, 'promote', { group, member: b.id }); call(a, 'promote', { group, member: d.id });
+  const state = call(c, 'state', { group }, 'GET');
+  assert.equal(state.members.find(m => m.id === b.id).role, 'moderator');
+  assert.equal(state.links, undefined); assert.equal(state.banned, undefined);
+  assert.ok(Array.isArray(call(b, 'state', { group }, 'GET').links));
+  assert.equal(call(b, 'state', { group }, 'GET').members.find(m => m.id === c.id).messages, 0);
+  assert.throws(() => call(b, 'kick', { group, member: a.id }), /regular members/);
+  assert.throws(() => call(b, 'kick', { group, member: d.id }), /regular members/);
+  assert.throws(() => call(b, 'update', { group, name: 'Mod rename' }), /owner/);
+  assert.throws(() => call(b, 'promote', { group, member: c.id }), /owner/);
+  assert.throws(() => call(b, 'delete', { group }), /owner/);
+  const fromOwner = call(a, 'message', send(a, group)), fromMember = call(c, 'message', send(c, group));
+  assert.throws(() => call(b, 'message-delete', { group, id: fromOwner.id }), /moderator/);
+  call(b, 'message-delete', { group, id: fromMember.id });
+  call(a, 'demote', { group, member: d.id });
+  assert.throws(() => call(d, 'kick', { group, member: c.id }), /owner or a moderator/);
+  call(b, 'kick', { group, member: c.id });
+  assert.equal(store.get(group).members.has(c.id), false);
+  store.removeUser(a.id);
+  assert.equal(store.get(group).owner, b.id);
+  assert.equal(store.get(group).moderators.has(b.id), false);
+});
+
+test('kicks allow rejoining, bans block it until unbanned, and invite-only kicks drop the invitation', () => {
+  const { users: [a,b,c], call } = setup();
+  const group = call(a, 'create', { name: 'Kick vs ban' }).id;
+  call(b, 'join', { group }); call(a, 'kick', { group, member: b.id });
+  call(b, 'join', { group });
+  call(a, 'ban', { group, member: b.id });
+  assert.equal(call(b, '', {}, 'GET')[0].blocked, true);
+  assert.throws(() => call(b, 'join', { group }), /cannot rejoin/);
+  assert.throws(() => call(a, 'invite', { group, member: b.id }), /banned/);
+  assert.deepEqual(call(a, 'state', { group }, 'GET').banned.map(x => x.alias), ['b']);
+  call(a, 'unban', { group, member: b.id });
+  assert.throws(() => call(a, 'unban', { group, member: b.id }), /not banned/);
+  call(b, 'join', { group });
+  const closed = call(a, 'create', { name: 'Closed', access: 'invite' }).id;
+  call(a, 'invite', { group: closed, member: c.id }); call(c, 'join', { group: closed });
+  call(a, 'kick', { group: closed, member: c.id });
+  assert.throws(() => call(c, 'join', { group: closed }), /invitation/);
+});
+
+test('mutes, slow mode and staff-only posting are enforced by the server', () => {
+  const { users: [a,b,c], call, send, advance } = setup();
+  const group = call(a, 'create', { name: 'Quiet' }).id;
+  call(b, 'join', { group }); call(c, 'join', { group }); call(a, 'promote', { group, member: c.id });
+  const before = call(b, 'message', send(b, group, 'before mute'));
+  assert.throws(() => call(a, 'mute', { group, member: b.id, minutes: 7 }), /listed/);
+  call(a, 'mute', { group, member: b.id, minutes: 5 });
+  assert.equal(call(b, 'state', { group }, 'GET').members.find(m => m.id === b.id).muted, true);
+  assert.throws(() => call(b, 'message', send(b, group)), /muted/);
+  const editState = call(b, 'message-edit-state', { group, id: before.id }, 'GET');
+  const edit = { group, id: before.id, membershipVersion: editState.membershipVersion, editVersion: 1,
+    envelopes: crypto.encryptGroupMessage({ id: before.id, group, version: before.version, sender: b.id, text: 'edited', editVersion: 1 }, b.identity, editState.members) };
+  assert.throws(() => call(b, 'message-edit', edit), /muted/);
+  // Leaving and rejoining does not clear a mute.
+  call(b, 'leave', { group }); call(b, 'join', { group });
+  assert.throws(() => call(b, 'message', send(b, group)), /muted/);
+  advance(5 * 60000 + 1);
+  call(b, 'message', send(b, group));
+  call(c, 'mute', { group, member: b.id, minutes: 0 });
+  advance(2 * 3600000);
+  assert.throws(() => call(b, 'message', send(b, group)), /until a moderator unmutes/);
+  call(c, 'unmute', { group, member: b.id });
+  call(a, 'update', { group, name: 'Quiet', slowMode: 30 });
+  call(b, 'message', send(b, group));
+  assert.throws(() => call(b, 'message', send(b, group)), /Slow mode/);
+  call(c, 'message', send(c, group)); call(c, 'message', send(c, group));
+  advance(30001); call(b, 'message', send(b, group));
+  call(a, 'update', { group, name: 'Quiet', readOnly: true });
+  assert.equal(call(a, 'state', { group }, 'GET').slowMode, 30);
+  advance(30001);
+  assert.throws(() => call(b, 'message', send(b, group)), /owner and moderators/);
+  call(c, 'message', send(c, group));
+});
+
+test('room settings validate, limit and lock joins, and shorten room lifetime', () => {
+  const { store, users: [a,b,c,d], call, advance } = setup();
+  for (const invalid of [{ limit: 1 }, { limit: 21 }, { limit: '5' }, { slowMode: 7 }, { lifetime: 48 }, { disappear: 1 }, { locked: 'yes' }])
+    assert.throws(() => call(a, 'create', { name: 'Bad', ...invalid }), /setting|limit/);
+  const room = call(a, 'create', { name: 'Small', limit: 2, lifetime: 1 });
+  assert.equal(room.expiresAt, store.get(room.id).updated + 3600000);
+  call(b, 'join', { group: room.id });
+  assert.throws(() => call(c, 'join', { group: room.id }), /full \(2 members\)/);
+  call(a, 'update', { group: room.id, name: 'Small', limit: 4, locked: true });
+  assert.equal(store.get(room.id).lifetime, 1);
+  assert.throws(() => call(c, 'join', { group: room.id }), /locked/);
+  call(a, 'update', { group: room.id, name: 'Small', locked: false });
+  call(c, 'join', { group: room.id });
+  advance(3600000);
+  assert.throws(() => call(d, 'join', { group: room.id }), /expired/);
+});
+
+test('invite links admit people to invite-only rooms within their expiry and use limits', () => {
+  const { users: [a,b,c,d], call, advance } = setup();
+  const group = call(a, 'create', { name: 'Linked', access: 'invite' }).id;
+  assert.throws(() => call(a, 'link-create', { group, hours: 2, uses: 1 }), /listed/);
+  const token = call(a, 'link-create', { group, hours: 1, uses: 1 }).links[0].token;
+  assert.ok(token.length >= 20);
+  assert.throws(() => call(b, 'invite-preview', { group }, 'GET'), /invalid or has expired/);
+  assert.throws(() => call(b, 'invite-preview', { group, invite: 'wrong' }, 'GET'), /invalid or has expired/);
+  const preview = call(b, 'invite-preview', { group, invite: token }, 'GET');
+  assert.equal(preview.name, 'Linked'); assert.equal(preview.members, undefined); assert.equal(preview.owner, undefined);
+  assert.throws(() => call(b, 'join', { group }), /invitation/);
+  call(b, 'join', { group, invite: token });
+  assert.throws(() => call(c, 'join', { group, invite: token }), /invalid or has expired/);
+  assert.deepEqual(call(a, 'state', { group }, 'GET').links, []);
+  const reusable = call(a, 'link-create', { group, hours: 1, uses: 0 }).links[0].token;
+  call(a, 'ban', { group, member: b.id });
+  assert.throws(() => call(b, 'join', { group, invite: reusable }), /banned/);
+  call(a, 'update', { group, name: 'Linked', access: 'invite', locked: true });
+  assert.throws(() => call(c, 'join', { group, invite: reusable }), /locked/);
+  call(a, 'update', { group, name: 'Linked', access: 'invite', locked: false });
+  call(c, 'join', { group, invite: reusable });
+  assert.equal(call(a, 'state', { group }, 'GET').links[0].uses, 1);
+  call(a, 'link-revoke', { group, token: reusable });
+  assert.throws(() => call(d, 'join', { group, invite: reusable }), /invalid or has expired/);
+  for (let i = 0; i < 10; i++) call(a, 'link-create', { group, hours: 1, uses: 5 });
+  assert.throws(() => call(a, 'link-create', { group, hours: 1, uses: 5 }), /Revoke/);
+  advance(3600001);
+  assert.equal(call(a, 'state', { group }, 'GET').links.length, 0);
+});
+
+test('disappearing messages are removed for everyone and from history', () => {
+  const { store, users: [a,b], events, call, send, advance } = setup();
+  const group = call(a, 'create', { name: 'Fleeting', disappear: 5 }).id;
+  call(b, 'join', { group });
+  const old = call(a, 'message', send(a, group));
+  advance(4 * 60000); const recent = call(b, 'message', send(b, group));
+  advance(60001);
+  assert.deepEqual(call(b, 'history', { group }, 'GET').map(m => m.id), [recent.id]);
+  assert.ok(events.some(e => e.user === b.id && e.event === 'message-removed' && e.data.id === old.id));
+  advance(4 * 60000); store.sweep();
+  assert.equal(store.get(group).history.length, 0); assert.equal(store.bytes, 0);
 });

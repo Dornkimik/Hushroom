@@ -63,18 +63,32 @@
   </dialog>
   <dialog id="group-dialog" aria-labelledby="group-dialog-title">
     <div class="dialog-heading"><h2 id="group-dialog-title">Create a temporary room</h2><button class="close-dialog" type="button" aria-label="Close room details">×</button></div>
-    <p class="group-hint">End-to-end encrypted messages and attachments for up to 20 members. Rooms expire after 24 hours without activity or when the server restarts. New members see only messages sent after they join.</p>
+    <p class="group-hint">End-to-end encrypted messages and attachments for up to 20 members. Rooms expire after a period without activity chosen by the owner (24 hours at most) or when the server restarts. New members see only messages sent after they join.</p>
     <form id="group-form">
       <label for="group-name">Room name</label><input id="group-name" maxlength="40" required>
       <label for="group-description">Description <span>(optional)</span></label><input id="group-description" maxlength="120">
       <label for="group-rules">Rules <span>(optional)</span></label><textarea id="group-rules" rows="3" maxlength="2000" placeholder="How should people participate?"></textarea>
       <label for="group-access">Who can join?</label><select id="group-access"><option value="open">Open to everyone</option><option value="invite">Invite only</option></select>
-      <p class="group-hint">Open rooms can be found and joined by anyone. Invite-only rooms appear for their members and invited people. Admins can also see and moderate their details. Room names, descriptions, rules, membership, and message counts are visible to the server.</p>
+      <p class="group-hint">Open rooms can be found and joined by anyone. Invite-only rooms appear for their members and invited people, and can be joined with an invite link. Admins can also see and moderate their details. Room names, descriptions, rules, settings, membership, and message counts are visible to the server.</p>
+      <h3 class="group-settings-heading">Room settings</h3>
+      <div class="group-settings">
+        <div><label for="group-limit">Member limit</label><input id="group-limit" type="number" min="2" max="20" value="20" required></div>
+        <div><label for="group-slow-mode">Slow mode</label><select id="group-slow-mode"><option value="0">Off</option><option value="5">5 seconds</option><option value="10">10 seconds</option><option value="30">30 seconds</option><option value="60">1 minute</option><option value="300">5 minutes</option></select></div>
+        <div><label for="group-lifetime">Delete room after inactivity</label><select id="group-lifetime"><option value="24">24 hours</option><option value="6">6 hours</option><option value="1">1 hour</option></select></div>
+        <div><label for="group-disappear">Disappearing messages</label><select id="group-disappear"><option value="0">Off</option><option value="5">After 5 minutes</option><option value="60">After 1 hour</option><option value="360">After 6 hours</option></select></div>
+      </div>
+      <label class="sound-choice"><input id="group-read-only" type="checkbox"> Only the owner and moderators can post</label>
+      <label class="sound-choice"><input id="group-locked" type="checkbox"> Lock the room so no new members can join</label>
+      <p class="group-hint">Slow mode does not apply to the owner and moderators. Disappearing messages are deleted for everyone once they reach the chosen age.</p>
       <button id="group-save" class="primary" type="submit">Create room</button>
     </form>
     <button id="group-join" class="primary" type="button" hidden>Join encrypted room</button>
     <form id="group-invite-form" hidden><label for="group-invite-person">Invite someone online</label><div class="group-invite"><select id="group-invite-person" aria-label="Person to invite"></select><button id="group-invite-submit" class="text-button" type="submit">Invite</button></div></form>
-    <section id="group-member-section" hidden><h3>Members</h3><p class="group-hint">The owner can see each member’s total messages sent during their current membership, including deleted messages.</p><div id="group-members"></div></section>
+    <section id="group-links-section" hidden><h3>Invite links</h3><p class="group-hint">Anyone with an active link can join, even an invite-only room. Banned people cannot use links, and a locked or full room stays closed.</p>
+      <form id="group-link-form" class="group-invite"><select id="group-link-hours" aria-label="Link expires after"><option value="1">Expires in 1 hour</option><option value="6">Expires in 6 hours</option><option value="24" selected>Expires in 24 hours</option></select><select id="group-link-uses" aria-label="Link use limit"><option value="1">1 use</option><option value="5">5 uses</option><option value="20">20 uses</option><option value="0" selected>No use limit</option></select><button class="text-button" type="submit">Create link</button></form>
+      <div id="group-links"></div></section>
+    <section id="group-member-section" hidden><h3>Members</h3><p class="group-hint">The owner and moderators can see each member’s total messages sent during their current membership, including deleted messages. Moderators can invite, mute, kick, ban and remove messages from regular members.</p><div id="group-members"></div></section>
+    <section id="group-banned-section" hidden><h3>Banned</h3><div id="group-banned"></div></section>
     <p id="group-owner-note" class="group-hint" hidden>Transfer ownership to another member before leaving, or delete the room.</p>
     <div class="dialog-actions"><button id="group-leave" class="text-button" type="button" hidden>Leave room</button><button id="group-delete" class="danger" type="button" hidden>Delete room</button></div>
     <p id="group-error" role="status"></p>

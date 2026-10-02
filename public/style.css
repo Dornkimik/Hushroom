@@ -443,6 +443,13 @@ dialog input, #emoji-search { border-radius: 7px; background: var(--side); }
 .group-member-info > small { display: block; margin-top: 5px; color: var(--muted); }
 .group-member-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 #group-error { color: var(--danger); font-size: 13px; }
+.group-settings-heading { margin-top: 24px; }
+.group-settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); column-gap: 14px; }
+#group-dialog .group-member-actions select { width: auto; padding: 5px 8px; font-size: 12px; }
+.group-link { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 0; border-top: 1px solid var(--line); }
+.group-link input { flex: 1 1 220px; padding: 8px; font-size: 12px; }
+.group-link small { flex-basis: 100%; color: var(--muted); }
+#group-link-form select { flex: 1; }
 #group-details { margin-left: auto; }
 #room-rules { flex-shrink: 0; margin: 0; padding: 12px 32px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 12px; }
 #room-rules summary { width: fit-content; cursor: pointer; color: var(--text); }
