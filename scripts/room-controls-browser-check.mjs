@@ -29,6 +29,12 @@ try {
   const contexts = await Promise.all([1, 2, 3, 4].map(() => browser.newContext()));
   const [a, b, c, d] = await Promise.all(contexts.map(context => context.newPage()));
   for (const page of [a, b, c, d]) { page.on('pageerror', e => errors.push(e.message)); page.on('dialog', dialog => dialog.accept()); }
+  // Record everything the browsers send and every room response, to prove room text never travels in plaintext.
+  const traffic = [];
+  for (const page of [a, b, c, d]) {
+    page.on('request', request => { if (request.url().includes('/api/')) traffic.push({ kind: 'request', url: request.url(), body: request.postData() || '' }); });
+    page.on('response', response => { if (response.url().includes('/api/groups')) response.text().then(body => traffic.push({ kind: 'response', url: response.url(), body })).catch(() => {}); });
+  }
   await Promise.all([a, b, c].map(page => enterGuest(page, origin)));
   for (const page of [a, b, c]) await page.waitForFunction(() => document.querySelector('#connection').textContent === 'Connected');
   const [, ub, uc] = await Promise.all([a, b, c].map(async page => (await api(page, 'session')).data.me));
@@ -133,7 +139,28 @@ try {
   assert.equal(await a.evaluate(() => document.querySelector('#group-dialog').scrollWidth <= document.querySelector('#group-dialog').clientWidth), true);
   assert.equal(await a.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   assert.deepEqual(errors, []);
-  console.log('PASS: room settings, invite links (single-use, reusable, across sign-in), moderators, mute, slow mode, message removal, ban/unban, staff-only posting, lock, history sharing, phone layout');
+
+  // Encryption audit: no room message text in any request or room response, and shared history is ciphertext only.
+  const secrets = ['member first message', 'member too fast', 'moderator one', 'moderator two', 'shared history sentinel', 'newcomer reply'];
+  assert.deepEqual(traffic.filter(t => secrets.some(s => t.body.includes(s))).map(t => `${t.kind} ${t.url}`), []);
+  const sends = traffic.filter(t => t.kind === 'request' && t.url.endsWith('/api/groups/message'));
+  assert.ok(sends.length >= 6);
+  for (const t of sends) {
+    const body = JSON.parse(t.body);
+    assert.deepEqual(Object.keys(body).filter(k => !['group', 'id', 'version', 'envelopes', 'replyTo', 'attachmentId', 'shareable'].includes(k)), []);
+    for (const box of Object.values(body.envelopes)) assert.deepEqual(Object.keys(box).sort(), ['ciphertext', 'nonce', 'v']);
+  }
+  const shares = traffic.filter(t => t.kind === 'request' && t.url.endsWith('/api/groups/history-share'));
+  assert.ok(shares.length > 0);
+  for (const t of shares) for (const item of JSON.parse(t.body).shares) {
+    assert.deepEqual(Object.keys(item).sort(), ['encrypted', 'id', 'member']);
+    assert.deepEqual(Object.keys(item.encrypted).sort(), ['ciphertext', 'nonce', 'v']);
+  }
+  assert.ok(traffic.some(t => t.kind === 'response' && t.url.includes('/api/groups/history') && t.body.includes('"shared":{')));
+  assert.ok(!traffic.some(t => t.kind === 'response' && /"(envelopes|shares)"/.test(t.body)));
+  // Secret keys never leave the browser.
+  assert.ok(!traffic.some(t => /secretKey/i.test(t.body)));
+  console.log('PASS: room settings, invite links (single-use, reusable, across sign-in), moderators, mute, slow mode, message removal, ban/unban, staff-only posting, lock, history sharing, invite cards, phone layout, plaintext-free room traffic');
 } finally {
   await browser?.close(); server.kill(); await rm(data, { recursive: true, force: true });
 }
