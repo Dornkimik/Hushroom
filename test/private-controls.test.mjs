@@ -83,7 +83,9 @@ test('private blocking covers account sessions, messages, edits and uploads; sid
       const upload = await fetch(`${origin}/api/attachments?peer=${a.me.id}`, { method: 'POST', headers: { Cookie: peer.cookie, Origin: origin, 'Content-Type': 'application/octet-stream' }, body: Buffer.alloc(32) });
       assert.equal(upload.status, 403);
     }
-    assert.equal((await request(b, 'message/edit', { id: first.data.id, editVersion: 1, encrypted: payload(b, a).encrypted })).status, 403);
+    // Blocking deletes the stored private history, so the blocked sender cannot edit (or keep storing) it.
+    assert.equal((await request(b, 'message/edit', { id: first.data.id, editVersion: 1, encrypted: payload(b, a).encrypted })).status, 404);
+    assert.equal((await request(a, `history?peer=${b.me.id}`)).data.length, 0);
     assert.equal((await request(c, 'message', payload(c, a))).status, 200);
     const room = (await request(a, 'session')).data.rooms[0].id;
     assert.equal((await request(b, 'message', { room, text: 'Shared rooms remain shared' })).status, 200);

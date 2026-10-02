@@ -31,7 +31,7 @@ catch (e) { if (e.code !== 'ENOENT') throw e; rooms = [
   { id: 'creative-corner', name: 'Creative corner', description: 'Ideas, works in progress, and happy accidents.' }
 ];
   // Seed once, then preserve the saved list, including an intentionally empty list.
-  await writeFile(path.join(dataDir, 'rooms.tmp'), JSON.stringify(rooms, null, 2));
+  await writeFile(path.join(dataDir, 'rooms.tmp'), JSON.stringify(rooms, null, 2), { mode: 0o600 });
   await rename(path.join(dataDir, 'rooms.tmp'), path.join(dataDir, 'rooms.json'));
 }
 let bans;
@@ -42,7 +42,9 @@ try { feedback = JSON.parse(await readFile(path.join(dataDir, 'feedback.json'), 
 catch (e) { if (e.code !== 'ENOENT') throw e; feedback = []; }
 const attachmentTTL = Number(process.env.ATTACHMENT_TTL_SECONDS || 86400) * 1000;
 if (!Number.isFinite(attachmentTTL) || attachmentTTL < 1000 || attachmentTTL > 86400000) throw new Error('ATTACHMENT_TTL_SECONDS must be between 1 and 86400.');
-const attachments = new Attachments({ ttl: attachmentTTL });
+const attachmentStorage = Number(process.env.ATTACHMENT_STORAGE_MB || 256) * 1024 * 1024;
+if (!Number.isFinite(attachmentStorage) || attachmentStorage < 16 * 1024 * 1024) throw new Error('ATTACHMENT_STORAGE_MB must be at least 16.');
+const attachments = new Attachments({ ttl: attachmentTTL, maxBytes: attachmentStorage });
 const sessions = new Map();
 const sessionById = id => { for (const s of sessions.values()) if (s.id === id) return s; };
 const histories = new Histories({ attachments, clientOf: id => sessionById(id)?.clientKey });
@@ -89,9 +91,22 @@ function onlinePeople(viewer) {
   }
   return [...people.values()].map(safeUser);
 }
-const presence = () => { for (const session of sessions.values()) if (online(session)) emit(session, 'people', onlinePeople(session)); };
+// Presence and room lists go to every online session, so one fan-out costs O(online²).
+// Fan-outs are coalesced: at most one per interval, and the interval grows with the number
+// of online sessions (2 ms each, up to 5 s), so connection churn cannot multiply that cost.
+let onlineCount = 0;
+function throttled(run) {
+  let last = 0, timer = null;
+  return () => {
+    if (timer) return;
+    const interval = Math.min(5000, onlineCount * 2), wait = last + interval - Date.now();
+    if (wait <= 0) { last = Date.now(); run(); return; }
+    timer = setTimeout(() => { timer = null; last = Date.now(); run(); }, wait);
+  };
+}
+const presence = throttled(() => { for (const session of sessions.values()) if (online(session)) emit(session, 'people', onlinePeople(session)); });
 const roomList = () => allRooms().map(r => ({ ...r, preview: (r.persistent ? announcements.messages : histories.get(`room:${r.id}`) || []).at(-1)?.text?.slice(0, 100) || '', count: new Set([...sessions.values()].filter(s => online(s) && s.room === r.id).map(presenceKey)).size }));
-const publishRooms = () => broadcast('rooms', roomList());
+const publishRooms = throttled(() => broadcast('rooms', roomList()));
 const privatePreferences = s => ({
   blocks: blocks.list(s).map(item => ({ ...item, peers: [...sessions.values()].filter(peer => userKey(peer) === item.key).map(peer => peer.id) })),
   hiddenChats: [...(s.hiddenChats || [])]
@@ -100,6 +115,15 @@ const publishPrivatePreferences = s => {
   for (const user of sessions.values()) if (user === s || (s.accountId && user.accountId === s.accountId)) emit(user, 'private-preferences', privatePreferences(user));
 };
 const ensurePrivateAllowed = (s, peer) => { if (blocks.between(s, peer)) fail(403, 'Private chat is unavailable because one of you has blocked the other.'); };
+// Blocking deletes the stored private history between the two people, so a blocked
+// sender cannot keep occupying the other person's private storage.
+function dropPrivateHistories(user, peer) {
+  const mine = [...sessions.values()].filter(s => userKey(s) === userKey(user)), theirs = [...sessions.values()].filter(s => userKey(s) === userKey(peer));
+  for (const a of mine) for (const b of theirs) {
+    const key = `dm:${[a.id, b.id].sort().join(':')}`;
+    if (histories.has(key)) histories.delete(key);
+  }
+}
 const publicSession = s => ({ ...safeUser(s), admin: isAdmin(s), account: Boolean(s.accountId) });
 const publishAppearance = s => { emit(s, 'session', publicSession(s)); broadcast('appearance', safeUser(s)); presence(); };
 const groups = new Groups({ isAdmin, emit, broadcast, safeUser, attachments, findUser: id => [...sessions.values()].find(s => s.id === id) });
@@ -122,12 +146,12 @@ function publicMentions(text) {
     }
   }
   mentions.sort((a, b) => a.start - b.start);
-  return mentions;
+  return mentions.slice(0, 20); // Bound mention highlighting/notifications per message.
 }
 let saveQueue = Promise.resolve();
 function saveBans() {
   const job = saveQueue.then(async () => {
-    await writeFile(path.join(dataDir, 'bans.tmp'), JSON.stringify([...bans.values()], null, 2));
+    await writeFile(path.join(dataDir, 'bans.tmp'), JSON.stringify([...bans.values()], null, 2), { mode: 0o600 });
     await rename(path.join(dataDir, 'bans.tmp'), path.join(dataDir, 'bans.json'));
   });
   saveQueue = job.catch(() => {});
@@ -136,7 +160,7 @@ function saveBans() {
 function saveRooms(transform) {
   const job = saveQueue.then(async () => {
     const next = transform(rooms);
-    await writeFile(path.join(dataDir, 'rooms.tmp'), JSON.stringify(next, null, 2));
+    await writeFile(path.join(dataDir, 'rooms.tmp'), JSON.stringify(next, null, 2), { mode: 0o600 });
     await rename(path.join(dataDir, 'rooms.tmp'), path.join(dataDir, 'rooms.json'));
     rooms = next;
   });
@@ -146,7 +170,7 @@ function saveRooms(transform) {
 function saveFeedback(transform) {
   const job = saveQueue.then(async () => {
     const next = transform(feedback);
-    await writeFile(path.join(dataDir, 'feedback.tmp'), JSON.stringify(next, null, 2));
+    await writeFile(path.join(dataDir, 'feedback.tmp'), JSON.stringify(next, null, 2), { mode: 0o600 });
     await rename(path.join(dataDir, 'feedback.tmp'), path.join(dataDir, 'feedback.json'));
     feedback = next;
   });
@@ -160,11 +184,17 @@ function base64Bytes(value, length, maximum = length) {
   if (bytes.toString('base64') !== value || (length !== null ? bytes.length !== length : bytes.length < 17 || bytes.length > maximum)) return null;
   return bytes;
 }
+function contentLength(req) {
+  const value = req.headers['content-length'];
+  if (typeof value !== 'string' || !/^\d{1,9}$/.test(value)) fail(411, 'Image uploads need a Content-Length.');
+  return Number(value);
+}
 async function body(req, maximum = 32768) {
   let text = '';
   for await (const chunk of req) { text += chunk; if (Buffer.byteLength(text) > maximum) fail(413, 'That request is too large.'); }
   try { const parsed = JSON.parse(text); if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) fail(400, 'Invalid request.'); return parsed; } catch { fail(400, 'Invalid request.'); }
 }
+const devHosts = new Set(['localhost', '127.0.0.1', '[::1]', ...(process.env.HOST && !['0.0.0.0', '::'].includes(process.env.HOST) ? [process.env.HOST.includes(':') ? `[${process.env.HOST}]` : process.env.HOST] : [])].map(x => x.toLowerCase()));
 const server = http.createServer(async (req, res) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'no-referrer');
@@ -188,6 +218,9 @@ const server = http.createServer(async (req, res) => {
       logClientAddress = false;
       console.log('Client address diagnostic:', JSON.stringify({ socket: req.socket.remoteAddress, forwardedFor: req.headers['x-forwarded-for'] || null, realIp: req.headers['x-real-ip'] || null, cfConnectingIp: req.headers['cf-connecting-ip'] || null }));
     }
+    // Without a configured ORIGIN (local development), only loopback host names are accepted,
+    // so a DNS-rebinding page cannot pass the same-origin check below.
+    if (!configuredOrigin && !devHosts.has(String(req.headers.host).toLowerCase().replace(/:\d+$/, ''))) fail(403, 'Set ORIGIN to serve SilenzaChat on this host name.');
     const origin = configuredOrigin || `http://${req.headers.host}`;
     if (req.headers.origin && req.headers.origin !== origin) fail(403, 'Request origin is not allowed.');
     if (req.method !== 'GET' && req.headers.origin !== origin) fail(403, 'Request origin is not allowed.');
@@ -206,7 +239,7 @@ const server = http.createServer(async (req, res) => {
         if (security.clientBanned(clientKey)) fail(403, 'New accounts cannot be created from this network right now.');
         security.register(clientKey);
       }
-      const account = url.pathname.endsWith('/register') ? await accounts.create(input.username, input.password) : await accounts.authenticate(input.username, input.password);
+      const account = url.pathname.endsWith('/register') ? await accounts.create(input.username, input.password, 'member', clientKey) : await accounts.authenticate(input.username, input.password, clientKey);
       if ([...bans.values()].some(ban => ban.accountId === account.id)) fail(403, 'This account is banned.');
       if (session && sessions.get(token) !== session) fail(401, 'Your session changed. Please try again.');
       if (session?.accountId && session.accountId !== account.id) fail(409, 'Sign out before switching accounts.');
@@ -250,6 +283,7 @@ const server = http.createServer(async (req, res) => {
     session.seen = Date.now();
     if (url.pathname === '/api/groups' || url.pathname.startsWith('/api/groups/')) {
       const action = url.pathname.slice('/api/groups'.length).replace(/^\//, '');
+      if (req.method === 'POST' && ['message', 'message-edit'].includes(action)) security.message(session.clientKey);
       const input = req.method === 'POST' ? await body(req, ['message', 'message-edit'].includes(action) ? 512000 : 32768) : Object.fromEntries(url.searchParams);
       // Recheck after reading the request, since a ban may occur during a slow upload.
       if (sessions.get(token) !== session) fail(403, 'This session is no longer available.');
@@ -268,7 +302,7 @@ const server = http.createServer(async (req, res) => {
         groups.member(group, session);
         if (!session.publicKey || version !== group.version) fail(409, 'Room membership changed. Try sending again.');
         if (req.headers['content-type'] !== 'application/octet-stream') fail(415, 'Upload encrypted image bytes only.');
-        const uploaded = await attachments.upload(req, session.id, null, { group: group.id, version }, session.clientKey);
+        const uploaded = await attachments.upload(req, session.id, null, { group: group.id, version }, session.clientKey, contentLength(req));
         if (sessions.get(token) !== session || groups.rooms.get(group.id) !== group || group.updated + 86400000 <= Date.now() || !group.members.has(session.id) || group.version !== version) {
           attachments.remove(uploaded.id); fail(409, 'Room membership changed during upload. Try sending again.');
         }
@@ -279,7 +313,7 @@ const server = http.createServer(async (req, res) => {
       ensurePrivateAllowed(session, peer);
       if (!session.publicKey || !peer.publicKey) fail(409, 'Both people need encryption identities before uploading.');
       if (req.headers['content-type'] !== 'application/octet-stream') fail(415, 'Upload encrypted image bytes only.');
-      const uploaded = await attachments.upload(req, session.id, peer.id, {}, session.clientKey);
+      const uploaded = await attachments.upload(req, session.id, peer.id, {}, session.clientKey, contentLength(req));
       // A ban or session expiry may have happened while reading the upload.
       if (sessions.get(token) !== session || ![...sessions.values()].includes(peer)) { attachments.remove(uploaded.id); fail(403, 'This private session is no longer available.'); }
       if (blocks.between(session, peer)) { attachments.remove(uploaded.id); ensurePrivateAllowed(session, peer); }
@@ -297,12 +331,15 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/events' && req.method === 'GET') {
       if (session.streams.size >= 6) fail(429, 'Too many open tabs.');
       const clientKey = security.client(req);
+      security.events(clientKey);
       const clientStreams = [...streamClients.values()].filter(key => key === clientKey).length;
       if (streamClients.size >= 2000 || clientStreams >= 30) fail(429, 'Too many active connections. Try again shortly.');
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
-      res.write(': connected\n\n'); session.connected = true; session.streams.add(res); streamClients.set(res, clientKey); presence(); publishRooms(); emit(session, 'groups-changed', {});
+      res.write(': connected\n\n'); session.connected = true; session.streams.add(res); streamClients.set(res, clientKey); onlineCount = streamClients.size;
+      // The new stream gets an immediate, current snapshot; everyone else gets the coalesced fan-out.
+      emit(session, 'people', onlinePeople(session)); emit(session, 'rooms', roomList()); presence(); publishRooms(); emit(session, 'groups-changed', {});
       const timer = setInterval(() => { session.seen = Date.now(); res.write(': heartbeat\n\n'); }, 20000);
-      res.on('close', () => { clearInterval(timer); session.streams.delete(res); streamClients.delete(res); presence(); publishRooms(); }); return;
+      res.on('close', () => { clearInterval(timer); session.streams.delete(res); streamClients.delete(res); onlineCount = streamClients.size; presence(); publishRooms(); }); return;
     }
     if (url.pathname === '/api/history' && req.method === 'GET') {
       const peer = url.searchParams.get('peer'), room = url.searchParams.get('room');
@@ -318,8 +355,35 @@ const server = http.createServer(async (req, res) => {
       json({ people: onlinePeople(session), bans: [...bans.values()].map(({ id, alias, bannedAt }) => ({ id, alias, bannedAt })), groups: groups.moderate('list', session) }); return;
     }
     if (req.method !== 'POST') fail(404, 'Not found.');
+    if (['/api/message', '/api/message/edit'].includes(url.pathname)) security.message(session.clientKey);
     const input = await body(req);
     if (sessions.get(token) !== session) fail(401, 'Your session has ended.');
+    if (['/api/auth/password', '/api/auth/logout-all', '/api/auth/delete'].includes(url.pathname)) {
+      const account = accounts.get(session.accountId);
+      if (!account) fail(403, 'Sign in to an account first.');
+      const clientKey = security.client(req);
+      const signOutOthers = () => { for (const [secret, s] of sessions) if (s !== session && s.accountId === account.id) removeSession(secret, s); };
+      if (url.pathname === '/api/auth/logout-all') {
+        signOutOthers(); presence(); publishRooms(); json({ ok: true }); return;
+      }
+      security.auth(clientKey, account.username);
+      if (url.pathname === '/api/auth/password') {
+        if (typeof input.password !== 'string' || input.password === input.current) fail(400, 'Choose a new password that differs from the current one.');
+        await accounts.changePassword(account.id, input.current, input.password, clientKey);
+        security.authenticated(clientKey, account.username);
+        // A password change ends every other session and rotates this session's cookie.
+        if (sessions.get(token) === session) {
+          signOutOthers(); sessions.delete(token);
+          const secret = randomBytes(32).toString('hex'); sessions.set(secret, session); cookie(secret);
+        }
+        presence(); publishRooms(); json({ ok: true }); return;
+      }
+      await accounts.remove(account.id, input.password, clientKey);
+      await blocks.removeAccount(account.id);
+      for (const [secret, s] of sessions) if (s.accountId === account.id) removeSession(secret, s);
+      res.setHeader('Set-Cookie', 'silenza=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0');
+      presence(); publishRooms(); json({ ok: true }); return;
+    }
     if (url.pathname === '/api/private/block') {
       if (typeof input.blocked !== 'boolean') fail(400, 'Choose block or unblock.');
       const peer = [...sessions.values()].find(person => person.id === input.peer);
@@ -328,6 +392,7 @@ const server = http.createServer(async (req, res) => {
       if (!input.blocked && !existing) fail(404, 'Blocked user not found.');
       if (input.blocked && blocks.list(session).length >= 500 && !blocks.has(session, peer)) fail(400, 'Your blocked list is full.');
       await blocks.update(session, input.blocked ? userKey(peer) : existing.key, input.blocked ? peer.alias : existing.alias, input.blocked);
+      if (input.blocked) dropPrivateHistories(session, peer);
       publishPrivatePreferences(session); json(privatePreferences(session)); return;
     }
     if (url.pathname === '/api/private/hide' || url.pathname === '/api/private/show') {
@@ -346,6 +411,8 @@ const server = http.createServer(async (req, res) => {
       if (!title || title.length > 120 || !text || text.length > 5000) fail(400, 'Add a title (up to 120 characters) and feedback (up to 5,000 characters).');
       session.feedbackSent = (session.feedbackSent || []).filter(time => Date.now() - time < 600000);
       if (session.feedbackSent.length >= 3) fail(429, 'You have sent several messages. Please wait 10 minutes before sending more feedback.');
+      // New guest sessions are cheap, so feedback is also limited per network.
+      security.feedback(security.client(req));
       const attempt = Date.now(); session.feedbackSent.push(attempt);
       const item = { id: randomUUID(), title, text, createdAt: new Date().toISOString(), reviewed: false };
       try {
@@ -582,8 +649,11 @@ const server = http.createServer(async (req, res) => {
     fail(404, 'Not found.');
   } catch (error) { if (!res.headersSent) json({ error: error.status ? error.message : 'Something went wrong. Please try again.' }, error.status || 500); else res.end(); }
 });
+// Slow request bodies cannot hold upload reservations or sockets for Node's 5-minute default.
+// (Event streams are unaffected: these limits apply only while the request itself is received.)
+server.requestTimeout = 60000;
+server.headersTimeout = 20000;
 setInterval(() => {
-
   // Sessions that never opened the chat stream (abandoned or scripted) expire after 10 minutes.
   for (const [token, s] of sessions) if (!online(s) && Date.now() - s.seen > (s.connected ? 86400000 : 600000)) {
     removeSession(token, s);

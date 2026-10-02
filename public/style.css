@@ -505,3 +505,4 @@ dialog input, #emoji-search { border-radius: 7px; background: var(--side); }
   .person-row { min-width: 210px; }
   .person-row .person { width: auto; min-width: 0; }
 }
+#delete-account-form .danger { margin-top: 10px; }

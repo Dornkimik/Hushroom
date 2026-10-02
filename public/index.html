@@ -52,6 +52,13 @@
     <label class="sound-choice"><input id="sound-rooms" type="checkbox"> Main rooms</label>
     <button id="test-sound" class="text-button" type="button">Test sound</button><p id="sound-status" role="status"></p>
     <section class="blocked-settings" aria-labelledby="blocked-title"><h3 id="blocked-title">Blocked users</h3><p>Blocking stops private messages and images in both directions. You may still see each other in shared rooms. Account blocks apply across logins; guest blocks last for this session.</p><div id="blocked-users"></div><p id="blocked-status" role="status"></p></section>
+    <section class="blocked-settings" id="account-security" aria-labelledby="account-security-title" hidden><h3 id="account-security-title">Account security</h3>
+      <form id="password-form"><label for="current-password">Current password</label><input id="current-password" type="password" autocomplete="current-password" maxlength="128" required><label for="new-password">New password <span>(15–128 characters)</span></label><input id="new-password" type="password" autocomplete="new-password" minlength="15" maxlength="128" required><button class="primary" type="submit">Change password</button></form>
+      <p>Changing your password signs out every other device.</p>
+      <button id="logout-all" class="text-button" type="button">Sign out all other devices</button>
+      <form id="delete-account-form"><label for="delete-password">Delete account <span>(enter your password to confirm)</span></label><input id="delete-password" type="password" autocomplete="current-password" maxlength="128" required><button class="danger" type="submit">Delete my account permanently</button></form>
+      <p id="account-security-status" role="status"></p>
+    </section>
     <button id="account-signout" class="text-button" type="button">Sign out / change identity</button>
   </dialog>
   <dialog id="group-dialog" aria-labelledby="group-dialog-title">

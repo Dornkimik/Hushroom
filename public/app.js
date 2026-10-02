@@ -609,7 +609,7 @@ function updateAppearance(person) {
   people = people.map(p => p.id === person.id ? { ...p, ...person } : p);
   renderPeople(); renderDMs();
 }
-function updateSession(session) { Object.assign(me, session); updateComposerState(); $('#identity-kind').textContent = me.account ? 'Persistent account' : 'Guest identity'; setAdmin(me.admin); updateAppearance(me); renderMessages(); }
+function updateSession(session) { Object.assign(me, session); updateComposerState(); $('#identity-kind').textContent = me.account ? 'Persistent account' : 'Guest identity'; $('#account-security').hidden = !me.account; setAdmin(me.admin); updateAppearance(me); renderMessages(); }
 $('#display-as-admin').onchange = async event => {
   const toggle = event.target; toggle.disabled = true;
   try { updateSession(await api('admin/appearance', { displayAsAdmin: toggle.checked })); $('#admin-error').textContent = ''; }
@@ -662,7 +662,7 @@ async function start() {
     const auth = await api('auth/status');
     if (!auth.me) { location.replace('/#entry'); return; }
     const data = await api('session'); me = data.me; rooms = data.rooms; people = data.people; blockedUsers = data.blocks || []; hiddenChats = new Set(data.hiddenChats || []); renderBlockedUsers(); groupRooms = data.groups || [];
-    $('#identity-kind').textContent = me.account ? 'Persistent account' : 'Guest identity';
+    $('#identity-kind').textContent = me.account ? 'Persistent account' : 'Guest identity'; $('#account-security').hidden = !me.account;
     try { encryptionClient = await SilenzaCrypto.createClient(me.id, api); } catch(e) { encryptionError = e.message; }
     for (const person of data.conversations || []) conversations.set(person.id, person.alias);
     $('#my-alias').textContent = me.alias; $('.me-avatar').textContent = me.alias.split(' ').slice(0,2).map(x => x[0]).join(''); setAdmin(me.admin); renderPeople(); renderAdminPeople();
@@ -739,6 +739,27 @@ window.addEventListener('silenza-signed-out', () => {
   if (signingOut) return;
   signingOut = true; clearSignedOutPage(); location.replace('/#entry');
 });
+function accountStatus(text) { $('#account-security-status').textContent = text; }
+$('#password-form').onsubmit = async event => {
+  event.preventDefault(); const button = $('#password-form button'); button.disabled = true; accountStatus('');
+  try {
+    await api('auth/password', { current: $('#current-password').value, password: $('#new-password').value });
+    $('#password-form').reset(); accountStatus('Password changed. Other devices were signed out.');
+  } catch (e) { accountStatus(e.message); } finally { button.disabled = false; }
+};
+$('#logout-all').onclick = async () => {
+  $('#logout-all').disabled = true; accountStatus('');
+  try { await api('auth/logout-all', {}); accountStatus('All other devices were signed out.'); }
+  catch (e) { accountStatus(e.message); } finally { $('#logout-all').disabled = false; }
+};
+$('#delete-account-form').onsubmit = async event => {
+  event.preventDefault(); const button = $('#delete-account-form button'); button.disabled = true; accountStatus('');
+  signingOut = true;
+  try {
+    await api('auth/delete', { password: $('#delete-password').value });
+    clearSignedOutPage(); await SilenzaCrypto.clearLocalKeys(); location.assign('/#entry');
+  } catch (e) { signingOut = false; accountStatus(e.message); button.disabled = false; }
+};
 $('#account-signout').onclick = async () => {
   signingOut = true;
   try {
