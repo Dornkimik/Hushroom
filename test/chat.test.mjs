@@ -29,7 +29,7 @@ test('anonymous public chat, private isolation, admin control and persistence', 
   function privatePayload(user, peer, text, extra = {}) {
     const id = randomUUID();
     const encrypted = encryption.encryptMessage({ id, sender: user.me.id, recipient: peer.me.id, text, ...extra }, user.identity, encryption.base64(peer.identity.publicKey));
-    return { id, peer: peer.me.id, encrypted, replyTo: extra.replyTo, attachmentId: extra.image?.id };
+    return { id, peer: peer.me.id, encrypted, replyTo: extra.replyTo, attachmentId: extra.file?.id };
   }
   const decrypt = (message, user, peer) => encryption.decryptMessage(message, user.me.id, user.identity, encryption.base64(peer.identity.publicKey));
   async function request(user, route, body, source = origin) {
@@ -141,15 +141,15 @@ test('anonymous public chat, private isolation, admin control and persistence', 
     assert.equal(remaining.length, 1);
     assert.deepEqual(remaining[0].reply, { id: pub.data.id, removed: true });
     assert.equal((await request(b, 'message', { room, text: 'Reply after removal', replyTo: pub.data.id })).status, 400);
-    const plaintext = new TextEncoder().encode('private image bytes only visible in browsers');
-    const encryptedImage = encryption.encryptImage(plaintext);
+    const plaintext = new TextEncoder().encode('private attachment bytes only visible in browsers');
+    const encryptedImage = encryption.encryptAttachment(plaintext);
     const uploadedResponse = await fetch(`${origin}/api/attachments?peer=${b.me.id}`, { method: 'POST', headers: { Cookie: a.cookie, Origin: origin, 'Content-Type': 'application/octet-stream' }, body: encryptedImage.bytes });
     assert.equal(uploadedResponse.status, 200); const uploaded = await uploadedResponse.json();
     const imageURL = `${origin}/api/attachments/${uploaded.id}`;
     assert.equal((await fetch(imageURL, { headers: { Cookie: b.cookie } })).status, 404); // Not published yet.
-    const image = { id: uploaded.id, key: encryptedImage.key, nonce: encryptedImage.nonce, type: 'image/webp', width: 1, height: 1, size: plaintext.length };
-    assert.equal((await request(b, 'message', privatePayload(b, a, 'stolen upload', { image }))).status, 404);
-    const payload = privatePayload(a, b, 'encrypted caption', { image });
+    const file = { id: uploaded.id, key: encryptedImage.key, nonce: encryptedImage.nonce, kind: 'file', type: 'application/octet-stream', name: 'notes.txt', size: plaintext.length };
+    assert.equal((await request(b, 'message', privatePayload(b, a, 'stolen upload', { file }))).status, 404);
+    const payload = privatePayload(a, b, 'encrypted caption', { file });
     const sentImage = await request(a, 'message', payload); assert.equal(sentImage.status, 200);
     assert.equal(sentImage.data.displayAsAdmin, true);
     assert.equal((await request(a, 'message', payload)).data.id, payload.id); // Safe network retry.
@@ -159,7 +159,7 @@ test('anonymous public chat, private isolation, admin control and persistence', 
     assert.equal(downloaded.headers.get('cache-control'), 'no-store');
     const ciphertext = new Uint8Array(await downloaded.arrayBuffer());
     assert.deepEqual(ciphertext, encryptedImage.bytes); assert.notDeepEqual(ciphertext, plaintext);
-    assert.deepEqual(encryption.decryptImage(ciphertext, decrypt(sentImage.data, b, a).image), plaintext);
+    assert.deepEqual(encryption.decryptAttachment(ciphertext, decrypt(sentImage.data, b, a).file), plaintext);
     await request(a, 'admin/appearance', { displayAsAdmin: false });
     assert.equal((await request(a, 'session')).data.me.displayAsAdmin, false);
     assert.equal((await request(b, `history?peer=${a.me.id}`)).data.find(m => m.id === sentImage.data.id).displayAsAdmin, true);

@@ -2,13 +2,13 @@ import { enterGuest, enterAccount, signOut } from './auth-browser-helper.mjs';
 import { chromium } from 'playwright';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import assert from 'node:assert/strict';
-import { auditImages } from './image-privacy-audit.mjs';
+import { auditAttachments } from './attachment-privacy-audit.mjs';
 const root = fileURLToPath(new URL('..', import.meta.url));
 const data = await mkdtemp(path.join(tmpdir(), 'silenzachat-browser-'));
 const probe = net.createServer(); probe.listen(0,'127.0.0.1'); await once(probe,'listening'); const port = probe.address().port; await new Promise(r=>probe.close(r));
@@ -102,11 +102,11 @@ try {
   });
   assert.deepEqual(storageRecovery, { closed: true, sameIdentity: true, verified: true, rejectsChangedKey: true });
   // Encrypt a locally generated raster image. The original filename must never leave the browser.
-  const imageAudit = await auditImages(a);
+  const imageAudit = await auditAttachments(a);
   const image=await a.evaluate(()=>{const canvas=document.createElement('canvas');canvas.width=160;canvas.height=100;const ctx=canvas.getContext('2d');ctx.fillStyle='#326b50';ctx.fillRect(0,0,160,100);return canvas.toDataURL('image/png').split(',')[1];});
   await imageAudit.assertFailsClosed(Buffer.from(image, 'base64'));
-  await a.locator('#image-input').setInputFiles({name:'private-filename.png',mimeType:'image/png',buffer:Buffer.from(image,'base64')});
-  await a.locator('#image-preview').waitFor({state:'visible'});
+  await a.locator('#file-input').setInputFiles({name:'private-filename.png',mimeType:'image/png',buffer:Buffer.from(image,'base64')});
+  await a.locator('#attachment-preview').waitFor({state:'visible'});
   await a.locator('#message').fill('secret image caption'); await a.locator('.send-button').click();
   await b.waitForFunction(()=>{const img=document.querySelector('.private-image');return img?.complete && img.naturalWidth===160;});
   assert.ok(!JSON.stringify(sent).includes('secret image caption')); assert.ok(!JSON.stringify(sent).includes('private-filename'));
@@ -120,10 +120,47 @@ try {
   await a.screenshot({path:path.join(data, 'private-desktop.png'),fullPage:true});
   await b.setViewportSize({width:390,height:844}); await b.screenshot({path:path.join(data, 'private-mobile.png'),fullPage:true});
   // An attachment can be sent with no caption (the textarea is not required).
-  await a.locator('#image-input').setInputFiles({name:'image-only.png',mimeType:'image/png',buffer:Buffer.from(image,'base64')});
-  await a.locator('#image-preview').waitFor({state:'visible'}); assert.equal(await a.locator('#message').inputValue(), '');
+  await a.locator('#file-input').setInputFiles({name:'image-only.png',mimeType:'image/png',buffer:Buffer.from(image,'base64')});
+  await a.locator('#attachment-preview').waitFor({state:'visible'}); assert.equal(await a.locator('#message').inputValue(), '');
   await a.locator('.send-button').click();
   await b.waitForFunction(()=>[...document.querySelectorAll('.private-image')].filter(img=>img.complete && img.naturalWidth===160).length===2);
+  // The next attachments come from the other participant, so the sender stays within the message rate limit.
+  const attachmentAuditB = await auditAttachments(b);
+  // A camera-style JPEG with EXIF location: the metadata is removed before encryption and the photo still renders.
+  const jpeg = Buffer.from(await b.evaluate(()=>{const canvas=document.createElement('canvas');canvas.width=120;canvas.height=80;const ctx=canvas.getContext('2d');ctx.fillStyle='#8a3b2f';ctx.fillRect(0,0,120,80);return canvas.toDataURL('image/jpeg').split(',')[1];}),'base64');
+  const exif = Buffer.concat([Buffer.from([0x45,0x78,0x69,0x66,0,0,0x4D,0x4D,0,42,0,0,0,8,0,0,0,0,0,0]), Buffer.from('GPS-SECRET-48.8584N-2.2945E')]);
+  const camera = Buffer.concat([jpeg.subarray(0,2), Buffer.from([0xFF,0xE1,(exif.length+2)>>8,(exif.length+2)&255]), exif, jpeg.subarray(2)]);
+  await b.locator('#file-input').setInputFiles({name:'holiday-photo.jpg',mimeType:'image/jpeg',buffer:camera});
+  await b.locator('#attachment-preview').waitFor({state:'visible'});
+  assert.match(await b.locator('#attachment-preview .attachment-detail').textContent(), /Metadata removed/);
+  await b.locator('.send-button').click();
+  await a.waitForFunction(()=>[...document.querySelectorAll('.private-image')].some(img=>img.complete && img.naturalWidth===120));
+  attachmentAuditB.assertNeverEncrypted('GPS-SECRET');
+  // A real browser recording (WebM with live, unknown-size elements) loads on demand and plays without its muxer metadata.
+  const clip = Buffer.from(await b.evaluate(async()=>{
+    const canvas=document.createElement('canvas');canvas.width=64;canvas.height=48;const ctx=canvas.getContext('2d');
+    const recorder=new MediaRecorder(canvas.captureStream(10),{mimeType:'video/webm'}),chunks=[];
+    recorder.ondataavailable=event=>chunks.push(event.data);recorder.start();
+    for(let i=0;i<8;i++){ctx.fillStyle=`rgb(${i*30},90,120)`;ctx.fillRect(0,0,64,48);await new Promise(r=>setTimeout(r,60));}
+    const stopped=new Promise(r=>{recorder.onstop=r;});recorder.stop();await stopped;
+    const bytes=new Uint8Array(await new Blob(chunks).arrayBuffer());let text='';for(const byte of bytes)text+=String.fromCharCode(byte);return btoa(text);
+  }),'base64');
+  assert.ok(clip.includes('Chrome'), 'The recorder should have written its muxer name as metadata.');
+  await b.locator('#file-input').setInputFiles({name:'recording.webm',mimeType:'video/webm',buffer:clip});
+  await b.locator('#attachment-preview').waitFor({state:'visible'}); await b.locator('.send-button').click();
+  await a.getByRole('button',{name:'Load video',exact:true}).click();
+  await a.waitForFunction(()=>{const video=document.querySelector('.private-video');return video && video.readyState>=1 && video.videoWidth===64;});
+  attachmentAuditB.assertNeverEncrypted('Chrome');
+  // Other files are encrypted with their name and offered only as a download.
+  await b.locator('#file-input').setInputFiles({name:'notes.txt',mimeType:'text/plain',buffer:Buffer.from('private notes body')});
+  await b.locator('#attachment-preview').waitFor({state:'visible'});
+  assert.match(await b.locator('#attachment-preview .attachment-detail').textContent(), /notes\.txt.*not removed/);
+  await b.locator('.send-button').click();
+  const downloadButton = a.getByRole('button',{name:'Download notes.txt',exact:true}); await downloadButton.waitFor();
+  const [download] = await Promise.all([a.waitForEvent('download'), downloadButton.click()]);
+  assert.equal(download.suggestedFilename(),'notes.txt');
+  assert.equal(await readFile(await download.path(),'utf8'),'private notes body');
+  for (const secret of ['holiday-photo','recording.webm','notes.txt','private notes body']) assert.ok(!JSON.stringify(sent).includes(secret));
   // Senders can delete their own images; recipients cannot. Replies and active previews are cleared.
   const imageRow = `#message-${imageMessage.id}`;
   assert.equal(await b.locator(imageRow).getByRole('button', {name:'Delete',exact:true}).count(), 0);
@@ -205,9 +242,9 @@ try {
   await returned.waitForFunction(()=>document.querySelector('#error').textContent.includes('local encryption key does not match'));
   assert.equal(await returned.locator('#message').isDisabled(),true);
   assert.deepEqual(errors,[]);
-  const auditedImages = await imageAudit.verify(Buffer.from(image, 'base64'), 'private-filename.png');
-  console.log(`PASS: ${auditedImages} private image uploads contain exact ciphertext; server returns unchanged ciphertext; no image plaintext or secret keys in captured requests`);
-  console.log('PASS: private text, encrypted image, replies, third-party isolation, reload, shared-tab keys, matching verification codes, offline delivery, key-change/key-loss blocking, private draft isolation, owner deletion and attachment cleanup, desktop/mobile rendering');
+  const auditedImages = await imageAudit.verify(Buffer.from(image, 'base64'), 'private-filename.png') + await attachmentAuditB.verify(camera, 'holiday-photo.jpg');
+  console.log(`PASS: ${auditedImages} private attachment uploads contain exact padded ciphertext; server returns unchanged ciphertext; no attachment plaintext or secret keys in captured requests`);
+  console.log('PASS: private text, encrypted images (EXIF removed), on-demand WebM video, generic file download, replies, third-party isolation, reload, shared-tab keys, matching verification codes, offline delivery, key-change/key-loss blocking, private draft isolation, owner deletion and attachment cleanup, desktop/mobile rendering');
 } finally {
   await browser?.close(); server.kill(); await once(server,'exit'); await rm(data,{recursive:true,force:true});
 }

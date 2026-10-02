@@ -2,8 +2,10 @@ const $ = selector => document.querySelector(selector);
 let me, rooms = [], people = [], adminBans = [], current, messages = [], stream, revision = 0, deleting, banning;
 let editingMessage, editSaving = false, signingOut = false;
 let replying, sending = false, suggestions = [], suggestionIndex = 0, completionStart = 0;
-let encryptionClient, encryptionError = '', peerIdentity, pendingImage, imagePreparing = false, imageRevision = 0, verificationTarget;
-const imageURLs = new Map(), imageLoads = new Map();
+let encryptionClient, encryptionError = '', peerIdentity, pendingFile, filePreparing = false, fileRevision = 0, verificationTarget;
+let attachmentLimit = 16 * 1024 * 1024;
+const fileURLs = new Map(), fileLoads = new Map(), filePlayers = new Map();
+const fileKinds = { image: 'Image', video: 'Video', audio: 'Audio', file: 'File' };
 let blockedUsers = [], hiddenChats = new Set();
 const isBlocked = id => blockedUsers.some(user => user.peers.includes(id));
 const conversations = new Map(), unread = new Map(), drafts = new Map();
@@ -134,9 +136,9 @@ async function select(target) {
   if (conversationKey(target) !== conversationKey(current)) {
     if (current) drafts.set(conversationKey(current), $('#message').value);
     $('#message').value = drafts.get(conversationKey(target)) || ''; resizeComposer();
-    clearPendingImage(); status('');
+    clearPendingFile(); status('');
   }
-  clearImageURLs(); peerIdentity = null; groupState = null;
+  clearFileURLs(); peerIdentity = null; groupState = null;
   current = target; const version = ++revision; messages = []; error();
   $('#room-rules').open = false;
   if (target?.peer) unread.delete(target.peer);
@@ -189,7 +191,7 @@ function renderMessages() {
         if (editSaving) return;
         editingMessage = { ...message };
         $('#edit-message-text').value = message.text;
-        $('#edit-message-text').required = !message.image;
+        $('#edit-message-text').required = !message.file;
         $('#edit-message-error').textContent = '';
         $('#edit-message-dialog').showModal(); $('#edit-message-text').focus();
       };
@@ -204,7 +206,7 @@ function renderMessages() {
     content.append(meta);
     if (message.reply && !message.locked) {
       const original = message.encrypted ? messages.find(m => m.id === message.reply.id && !m.locked) : message.reply;
-      const quote = element('button', 'reply-quote', message.reply.removed ? 'Original message removed' : original ? `${original.alias}: ${original.text || 'Image'}` : 'Original message unavailable');
+      const quote = element('button', 'reply-quote', message.reply.removed ? 'Original message removed' : original ? `${original.alias}: ${original.text || fileKinds[original.file?.kind] || 'Attachment'}` : 'Original message unavailable');
       quote.type = 'button'; quote.disabled = message.reply.removed;
       quote.onclick = () => { const original = document.getElementById(`message-${message.reply.id}`); if (original) { original.scrollIntoView({ block: 'center' }); original.tabIndex = -1; original.focus({ preventScroll: true }); } else error('The original message is no longer in the recent history.'); };
       content.append(quote);
@@ -215,7 +217,7 @@ function renderMessages() {
       offset = mention.end;
     }
     body.append(document.createTextNode(message.text.slice(offset))); content.append(body);
-    if (message.image && !message.locked) renderPrivateImage(message, content);
+    if (message.file && !message.locked) renderAttachment(message, content);
     row.append(avatar(message.alias, own), content); return row;
   }));
   $('#empty-chat').hidden = messages.length > 0 || !current;
@@ -228,7 +230,7 @@ function applyRemoval(removed) {
   if (!matches(removed)) return;
   const { id } = removed;
   if (editingMessage?.id === id) { $('#edit-message-dialog').close(); editingMessage = null; }
-  revokeImage(id); messages = messages.filter(message => message.id !== id);
+  revokeFile(id); messages = messages.filter(message => message.id !== id);
   for (const message of messages) if (message.reply?.id === id) message.reply = { id, removed: true };
   if (replying?.id === id) setReply(null);
   renderMessages();
@@ -250,13 +252,13 @@ async function receive(message) {
   if (matches(message) && !messages.some(m => m.id === message.id)) {
     const version = revision;
     const needsAuthentication = !message.room;
-    messages = [...messages, needsAuthentication ? { ...message, text: 'Decrypting…', image: null, mentions: [], locked: true } : message].slice(rooms.find(r => r.id === message.room)?.persistent ? 0 : -100); renderMessages();
+    messages = [...messages, needsAuthentication ? { ...message, text: 'Decrypting…', file: null, mentions: [], locked: true } : message].slice(rooms.find(r => r.id === message.room)?.persistent ? 0 : -100); renderMessages();
     if (needsAuthentication) {
       const decoded = await decodePrivate(message);
       if (version !== revision) return;
       messages = messages.map(m => m.id === message.id && (m.editVersion || 0) === (message.editVersion || 0) ? { ...decoded, reply: m.reply } : m); renderMessages();
     }
-    for (const id of new Set([...imageURLs.keys(), ...imageLoads.keys()])) if (!messages.some(m => m.id === id)) revokeImage(id);
+    for (const id of new Set([...fileURLs.keys(), ...fileLoads.keys(), ...filePlayers.keys()])) if (!messages.some(m => m.id === id)) revokeFile(id);
   }
 }
 async function applyEdit(message) {
@@ -266,7 +268,7 @@ async function applyEdit(message) {
   if (!existing || (existing.editVersion || 0) >= message.editVersion) return;
   const version = revision;
   // Reserve the version before decrypting so a slower event cannot overwrite a newer edit.
-  messages = messages.map(m => m.id === message.id ? { ...message, text: 'Decrypting…', image: null, mentions: [], locked: true, reply: m.reply } : m);
+  messages = messages.map(m => m.id === message.id ? { ...message, text: 'Decrypting…', file: null, mentions: [], locked: true, reply: m.reply } : m);
   const decoded = await decodePrivate(message);
   if (version !== revision) return;
   messages = messages.map(m => m.id === message.id && m.editVersion === message.editVersion ? { ...decoded, reply: m.reply } : m);
@@ -284,18 +286,18 @@ $('#edit-message-form').onsubmit = async event => {
   const button = event.currentTarget.querySelector('button[type="submit"]');
   editSaving = true; button.disabled = true; $('#edit-message-error').textContent = '';
   try {
-    if ((!text && !message.image) || text.length > 2000) throw new Error('Use between 1 and 2,000 characters, or keep an attached image.');
+    if ((!text && !message.file) || text.length > 2000) throw new Error('Use between 1 and 2,000 characters, or keep an attachment.');
     const editVersion = (message.editVersion || 0) + 1;
     let result;
     if (message.group) {
       const state = await api(`groups/message-edit-state?${new URLSearchParams({ group: message.group, id: message.id })}`);
       const envelopes = await encryptionClient.encryptGroup({ id: message.id, group: message.group, version: message.version, sender: me.id, text,
-        replyTo: message.reply?.id || null, image: message.image || null, editVersion, sentAt: message.sentAt ?? null }, state.members);
+        replyTo: message.reply?.id || null, file: message.file || null, editVersion, sentAt: message.sentAt ?? null }, state.members);
       result = await api('groups/message-edit', { group: message.group, id: message.id, membershipVersion: state.membershipVersion, editVersion, envelopes });
     } else if (message.encrypted) {
       const person = await encryptionClient.peer(message.recipient);
       const encrypted = encryptionClient.encrypt({ id: message.id, sender: me.id, recipient: message.recipient, text,
-        replyTo: message.reply?.id || null, image: message.image || null, editVersion, sentAt: message.sentAt ?? null }, person);
+        replyTo: message.reply?.id || null, file: message.file || null, editVersion, sentAt: message.sentAt ?? null }, person);
       result = await api('message/edit', { id: message.id, editVersion, encrypted });
     } else result = await api('message/edit', { id: message.id, editVersion, text });
     await applyEdit(result);
@@ -307,17 +309,17 @@ function updateComposerState(problem) {
   const privateChat = Boolean(current?.peer), ready = Boolean(encryptionClient && peerIdentity?.id === current?.peer);
   const groupChat = Boolean(current?.group), groupReady = Boolean(encryptionClient && groupState?.id === current?.group && groupState?.joined);
   $('#message').disabled = !current || (rooms.find(r => r.id === current?.room)?.adminOnly && !me.admin) || (privateChat && !ready) || (groupChat && !groupReady);
-  $('#message').required = !pendingImage;
-  $('.send-button').disabled = $('#message').disabled || sending || imagePreparing;
+  $('#message').required = !pendingFile;
+  $('.send-button').disabled = $('#message').disabled || sending || filePreparing;
   $('#emoji-toggle').disabled = $('#message').disabled;
-  $('#attach-image').hidden = !privateChat && !groupChat; $('#attach-image').disabled = !(groupChat ? groupReady : ready) || sending || imagePreparing;
+  $('#attach-file').hidden = !privateChat && !groupChat; $('#attach-file').disabled = !(groupChat ? groupReady : ready) || sending || filePreparing;
   $('#verify-identity').disabled = !ready;
   $('#verify-identity').hidden = groupChat;
   if (groupChat) $('#encryption-status').textContent = problem || (groupReady ? 'End-to-end encrypted · Verify members in Room details' : encryptionError || 'Preparing room encryption…');
   if (privateChat) $('#encryption-status').textContent = problem || (ready ? `End-to-end encrypted · ${peerIdentity.verified ? 'Identity verified' : 'Identity not verified'}` : encryptionError || 'Waiting for private encryption…');
 }
 async function decodePrivate(message) {
-  if (!validMessageRoute(message)) return { ...message, text: 'Invalid conversation metadata.', image: null, mentions: [], locked: true };
+  if (!validMessageRoute(message)) return { ...message, text: 'Invalid conversation metadata.', file: null, mentions: [], locked: true };
   if (message.group) {
     try {
       if (!encryptionClient) throw new Error(encryptionError || 'Room encryption is unavailable.');
@@ -331,7 +333,7 @@ async function decodePrivate(message) {
         }
       }
       return { ...message, ...plain, mentions: mentions.sort((a, b) => a.start - b.start) };
-    } catch(e) { return { ...message, text: e.message, image: null, mentions: [], locked: true }; }
+    } catch(e) { return { ...message, text: e.message, file: null, mentions: [], locked: true }; }
   }
   if (message.room) return message;
   try {
@@ -350,64 +352,125 @@ async function decodePrivate(message) {
       }
     }
     return { ...message, ...plain, mentions: mentions.sort((a, b) => a.start - b.start) };
-  } catch(e) { return { ...message, text: e.message, image: null, mentions: [], locked: true }; }
+  } catch(e) { return { ...message, text: e.message, file: null, mentions: [], locked: true }; }
 }
-function revokeImage(id) {
-  if (imageURLs.has(id)) URL.revokeObjectURL(imageURLs.get(id)); imageURLs.delete(id);
-  imageLoads.get(id)?.controller.abort(); imageLoads.delete(id);
+const formatBytes = bytes => bytes < 1048576 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1048576).toFixed(1)} MB`;
+// QuickTime files are ISO media; browsers that play them expect the MP4 type.
+const mediaType = type => type === 'video/quicktime' ? 'video/mp4' : type;
+const extensions = { 'video/mp4': 'mp4', 'video/quicktime': 'mov', 'video/webm': 'webm', 'audio/mpeg': 'mp3', 'audio/mp4': 'm4a', 'audio/webm': 'webm', 'audio/wav': 'wav' };
+function revokeFile(id) {
+  if (fileURLs.has(id)) URL.revokeObjectURL(fileURLs.get(id)); fileURLs.delete(id);
+  fileLoads.get(id)?.controller.abort(); fileLoads.delete(id);
+  const player = filePlayers.get(id)?.querySelector('video, audio');
+  if (player) { player.pause(); player.removeAttribute('src'); player.load(); }
+  filePlayers.delete(id);
 }
-function clearImageURLs() { for (const id of new Set([...imageURLs.keys(), ...imageLoads.keys()])) revokeImage(id); }
-function clearPendingImage() {
-  imageRevision++; imagePreparing = false;
-  if (pendingImage?.url) URL.revokeObjectURL(pendingImage.url);
-  pendingImage = null; $('#image-preview').hidden = true; $('#image-preview img').removeAttribute('src'); $('#image-input').value = ''; $('#message').required = true;
+function clearFileURLs() { for (const id of new Set([...fileURLs.keys(), ...fileLoads.keys(), ...filePlayers.keys()])) revokeFile(id); }
+function clearPendingFile() {
+  fileRevision++; filePreparing = false;
+  if (pendingFile?.url) URL.revokeObjectURL(pendingFile.url);
+  pendingFile = null; $('#attachment-preview').hidden = true; $('#attachment-preview .attachment-thumb').replaceWith(element('span', 'attachment-thumb'));
+  $('#file-input').value = ''; $('#message').required = true;
 }
-$('#attach-image').onclick = () => $('#image-input').click();
-$('#cancel-image').onclick = () => { clearPendingImage(); updateComposerState(); };
-$('#image-input').onchange = async () => {
-  const file = $('#image-input').files[0]; if (!file || (!current?.peer && !current?.group)) return;
-  clearPendingImage(); const version = imageRevision;
-  imagePreparing = true; updateComposerState(); error(); status('Preparing image locally…');
+$('#attach-file').onclick = () => $('#file-input').click();
+$('#cancel-attachment').onclick = () => { clearPendingFile(); updateComposerState(); };
+$('#file-input').onchange = async () => {
+  const file = $('#file-input').files[0]; if (!file || (!current?.peer && !current?.group)) return;
+  clearPendingFile(); const version = fileRevision;
+  filePreparing = true; updateComposerState(); error(); status('Preparing attachment locally…');
   try {
-    const image = await SilenzaImages.prepare(file);
-    if (version !== imageRevision) return;
-    pendingImage = { ...image, url: URL.createObjectURL(image.blob) };
-    $('#image-preview img').src = pendingImage.url;
-    $('#image-preview span').textContent = 'Encrypted before upload · expires within 24 hours'; $('#image-preview').hidden = false;
-  } catch(e) { if (version === imageRevision) error(e.message); }
-  finally { if (version === imageRevision) { imagePreparing = false; status(''); updateComposerState(); } }
+    const prepared = await SilenzaAttachments.prepare(file, size => SilenzaCrypto.paddedSize(size) + 16 <= attachmentLimit);
+    if (version !== fileRevision) return;
+    pendingFile = { ...prepared, url: URL.createObjectURL(prepared.blob) };
+    let thumb;
+    if (pendingFile.kind === 'image') { thumb = element('img', 'attachment-thumb'); thumb.alt = 'Image ready to send'; thumb.src = pendingFile.url; }
+    else if (pendingFile.kind === 'video') { thumb = element('video', 'attachment-thumb'); thumb.muted = true; thumb.preload = 'metadata'; thumb.setAttribute('aria-label', 'Video ready to send'); thumb.src = pendingFile.url; }
+    else thumb = element('span', 'attachment-thumb attachment-icon', pendingFile.kind === 'audio' ? '♪' : '▤');
+    $('#attachment-preview .attachment-thumb').replaceWith(thumb);
+    $('#attachment-preview .attachment-detail').textContent = pendingFile.kind === 'file'
+      ? `${pendingFile.name} · ${formatBytes(pendingFile.size)} · Encrypted before upload. Sent as-is: details stored inside the file are not removed.`
+      : `${fileKinds[pendingFile.kind]} · ${formatBytes(pendingFile.size)} · Metadata removed and encrypted before upload · expires within 24 hours`;
+    $('#attachment-preview').hidden = false;
+  } catch(e) { if (version === fileRevision) error(e.tooLarge ? `${e.message} Attachments can be up to ${formatBytes(attachmentLimit - 16)}.` : e.message); }
+  finally { if (version === fileRevision) { filePreparing = false; status(''); updateComposerState(); } }
 };
-function renderPrivateImage(message, content) {
-  const note = element('p', 'image-note'); content.append(note);
-  if (message.imageExpired || message.attachment.expiresAt <= Date.now()) { note.textContent = 'Image expired'; return; }
-  const img = element('img', 'private-image'); img.alt = 'Private image'; img.width = message.image.width; img.height = message.image.height;
-  content.append(img);
-  note.textContent = `Encrypted image · expires ${new Date(message.attachment.expiresAt).toLocaleString()}`;
-  if (imageURLs.has(message.id)) { img.src = imageURLs.get(message.id); return; }
-  const version = revision;
-  if (!imageLoads.has(message.id)) {
-    const controller = new AbortController();
-    const promise = (async () => {
-      const response = await fetch(`/api/attachments/${encodeURIComponent(message.image.id)}`, { signal: controller.signal, cache: 'no-store' });
-      if (!response.ok) throw new Error('Image expired or unavailable.');
-      const bytes = new Uint8Array(await response.arrayBuffer());
-      const plain = SilenzaCrypto.decryptImage(bytes, message.image);
-      // Only our raster format is rendered, never SVG/HTML or a server-provided MIME type.
-      if (String.fromCharCode(...plain.subarray(0, 4)) !== 'RIFF' || String.fromCharCode(...plain.subarray(8, 12)) !== 'WEBP') throw new Error('Invalid private image.');
-      if (version !== revision || controller.signal.aborted || !messages.some(m => m.id === message.id) || message.attachment.expiresAt <= Date.now()) throw new Error('Image no longer available.');
-      const url = URL.createObjectURL(new Blob([plain], { type: 'image/webp' })); imageURLs.set(message.id, url); return url;
-    })();
-    imageLoads.set(message.id, { promise, controller });
-  }
-  imageLoads.get(message.id).promise.then(url => { if (version === revision) img.src = url; }).catch(e => { img.hidden = true; note.textContent = e.message; });
+async function fetchAttachment(message, signal) {
+  const file = message.file, label = fileKinds[file.kind], version = revision;
+  const response = await fetch(`/api/attachments/${encodeURIComponent(file.id)}`, { signal, cache: 'no-store' });
+  if (!response.ok) throw new Error(`${label} expired or unavailable.`);
+  const plain = SilenzaCrypto.decryptAttachment(new Uint8Array(await response.arrayBuffer()), file);
+  // Only allow-listed formats whose bytes match the encrypted type are shown, never SVG/HTML or a server-provided MIME type.
+  if (!SilenzaAttachments.matches(plain, file.type) || (file.kind === 'image' && !SilenzaAttachments.displayable(plain, file.type))) throw new Error(`Invalid private ${label.toLowerCase()}.`);
+  if (version !== revision || signal?.aborted || !messages.some(m => m.id === message.id) || message.attachment.expiresAt <= Date.now()) throw new Error(`${label} no longer available.`);
+  return plain;
 }
-async function uploadEncryptedImage(image, target) {
-  status('Encrypting image…');
-  const encrypted = SilenzaCrypto.encryptImage(new Uint8Array(await image.blob.arrayBuffer()));
-  status('Uploading encrypted image…');
+function loadMedia(message) {
+  const id = message.id;
+  if (fileURLs.has(id)) return Promise.resolve(fileURLs.get(id));
+  if (!fileLoads.has(id)) {
+    const controller = new AbortController();
+    const promise = fetchAttachment(message, controller.signal).then(plain => {
+      if (controller.signal.aborted) throw new Error(`${fileKinds[message.file.kind]} no longer available.`);
+      const url = URL.createObjectURL(new Blob([plain], { type: mediaType(message.file.type) })); fileURLs.set(id, url); return url;
+    });
+    fileLoads.set(id, { promise, controller });
+    // A failed image stays failed until the conversation reloads; a player can be retried right away.
+    if (message.file.kind !== 'image') promise.catch(() => { if (fileLoads.get(id)?.promise === promise) fileLoads.delete(id); });
+  }
+  return fileLoads.get(id).promise;
+}
+function mediaPlayer(message, url) {
+  if (filePlayers.has(message.id)) return filePlayers.get(message.id);
+  const file = message.file, wrapper = element('div', 'attachment-player'), media = element(file.kind === 'video' ? 'video' : 'audio', `private-${file.kind}`);
+  media.controls = true; media.preload = 'metadata';
+  if (file.kind === 'video') { media.playsInline = true; if (file.width) { media.width = file.width; media.height = file.height; } }
+  media.onerror = () => { media.hidden = true; wrapper.prepend(element('p', 'attachment-note', `This browser cannot play this ${file.kind}. Save it to open it in another app.`)); };
+  const save = element('a', 'attachment-save', `Save ${file.kind}`); save.href = url; save.download = `silenza-${file.kind}.${extensions[file.type]}`;
+  media.src = url; wrapper.append(media, save);
+  filePlayers.set(message.id, wrapper); return wrapper;
+}
+async function downloadFile(message) {
+  const plain = await fetchAttachment(message);
+  // Generic files are only ever saved, never opened as a page from this site.
+  const url = URL.createObjectURL(new Blob([plain], { type: 'application/octet-stream' })), link = element('a', '');
+  link.href = url; link.download = message.file.name; link.hidden = true;
+  document.body.append(link); link.click(); link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+function renderAttachment(message, content) {
+  const file = message.file, label = fileKinds[file.kind], note = element('p', 'attachment-note'); content.append(note);
+  if (message.fileExpired || message.attachment.expiresAt <= Date.now()) { note.textContent = `${label} expired`; return; }
+  note.textContent = `Encrypted ${label.toLowerCase()} · ${formatBytes(file.size)} · expires ${new Date(message.attachment.expiresAt).toLocaleString()}`;
+  if (file.kind === 'image') {
+    const img = element('img', 'private-image'); img.alt = 'Private image'; img.width = file.width; img.height = file.height;
+    content.append(img);
+    const version = revision;
+    loadMedia(message).then(url => { if (version === revision) img.src = url; }).catch(e => { img.hidden = true; note.textContent = e.message; });
+    return;
+  }
+  if (filePlayers.has(message.id)) { content.append(filePlayers.get(message.id)); return; }
+  // Videos, audio and files are only downloaded when asked for.
+  const button = element('button', 'attachment-button', file.kind === 'file' ? `Download ${file.name}` : `Load ${label.toLowerCase()}`);
+  button.type = 'button';
+  if (file.kind === 'file') button.title = 'Only open files from people you trust.';
+  button.onclick = async () => {
+    button.disabled = true;
+    try {
+      if (file.kind === 'file') await downloadFile(message);
+      else document.querySelector(`#message-${CSS.escape(message.id)} .attachment-button`)?.replaceWith(mediaPlayer(message, await loadMedia(message)));
+    } catch (e) { note.textContent = e.message; }
+    finally { button.disabled = false; }
+  };
+  content.append(button);
+}
+async function uploadEncryptedFile(file, target) {
+  status('Encrypting attachment…');
+  const encrypted = SilenzaCrypto.encryptAttachment(file.bytes);
+  status('Uploading encrypted attachment…');
   const response = await fetch(`/api/attachments?${new URLSearchParams(target)}`, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: encrypted.bytes });
-  const result = await response.json(); if (!response.ok) throw new Error(result.error || 'Could not upload image.');
-  return { id: result.id, key: encrypted.key, nonce: encrypted.nonce, type: image.type, width: image.width, height: image.height, size: image.size };
+  const result = await response.json().catch(() => ({})); if (!response.ok) throw new Error(result.error || 'Could not upload attachment.');
+  return { id: result.id, key: encrypted.key, nonce: encrypted.nonce, kind: file.kind, type: file.type, size: file.size,
+    ...(file.width ? { width: file.width, height: file.height } : {}), ...(file.kind === 'file' ? { name: file.name } : {}) };
 }
 async function showVerification(id) {
   if (!id || !encryptionClient) return;
@@ -459,36 +522,36 @@ async function runCommand(text, reply) {
 }
 $('#composer').onsubmit = async event => {
   event.preventDefault(); if (!current || sending) return;
-  const draft = $('#message').value, text = draft.trim(); if ((!text && !pendingImage) || imagePreparing) return;
-  const target = { ...current }, version = revision, reply = replying, image = pendingImage; sending = true; $('.send-button').disabled = true; error(); status('');
+  const draft = $('#message').value, text = draft.trim(); if ((!text && !pendingFile) || filePreparing) return;
+  const target = { ...current }, version = revision, reply = replying, pending = pendingFile; sending = true; $('.send-button').disabled = true; error(); status('');
   closeSuggestions(); toggleEmoji(false);
   let uploadId;
   try {
-    if (image && text.startsWith('/') && !text.startsWith('//')) throw new Error('Send the image separately from a command.');
+    if (pending && text.startsWith('/') && !text.startsWith('//')) throw new Error('Send the attachment separately from a command.');
     if (text.startsWith('/') && !text.startsWith('//')) await runCommand(text, reply);
     else if (target.group) {
       if (!encryptionClient) throw new Error(encryptionError || 'Room encryption is unavailable.');
       const state = await api(`groups/state?group=${encodeURIComponent(target.group)}`);
-      const attachment = image ? await uploadEncryptedImage(image, { group: state.id, version: state.version }) : null;
-      uploadId = attachment?.id;
+      const file = pending ? await uploadEncryptedFile(pending, { group: state.id, version: state.version }) : null;
+      uploadId = file?.id;
       const id = crypto.randomUUID();
       const envelopes = await encryptionClient.encryptGroup({ id, group: state.id, version: state.version, sender: me.id,
-        text: text.startsWith('//') ? text.slice(1) : text, replyTo: reply?.id || null, image: attachment }, state.members);
+        text: text.startsWith('//') ? text.slice(1) : text, replyTo: reply?.id || null, file }, state.members);
       await receive(await api('groups/message', { group: state.id, version: state.version, id, envelopes, replyTo: reply?.id, attachmentId: uploadId }));
       uploadId = null; status('');
-      if (pendingImage === image) clearPendingImage();
+      if (pendingFile === pending) clearPendingFile();
     } else if (target.peer) {
       if (!encryptionClient) throw new Error(encryptionError || 'Private encryption is unavailable.');
       const person = await encryptionClient.peer(target.peer);
-      const attachment = image ? await uploadEncryptedImage(image, { peer: target.peer }) : null;
-      uploadId = attachment?.id;
+      const file = pending ? await uploadEncryptedFile(pending, { peer: target.peer }) : null;
+      uploadId = file?.id;
       const id = crypto.randomUUID();
-      const encrypted = encryptionClient.encrypt({ id, sender: me.id, recipient: target.peer, text: text.startsWith('//') ? text.slice(1) : text, replyTo: reply?.id || null, image: attachment }, person);
+      const encrypted = encryptionClient.encrypt({ id, sender: me.id, recipient: target.peer, text: text.startsWith('//') ? text.slice(1) : text, replyTo: reply?.id || null, file }, person);
       await receive(await api('message', { peer: target.peer, id, encrypted, replyTo: reply?.id, attachmentId: uploadId }));
       uploadId = null; status('');
-      if (pendingImage === image) clearPendingImage();
+      if (pendingFile === pending) clearPendingFile();
     } else {
-      if (image) throw new Error('Images can only be sent in encrypted conversations.');
+      if (pending) throw new Error('Attachments can only be sent in encrypted conversations.');
       await receive(await api('message', { ...target, text: text.startsWith('//') ? text.slice(1) : text, replyTo: reply?.id }));
     }
     if (drafts.get(conversationKey(target)) === draft) drafts.delete(conversationKey(target));
@@ -661,7 +724,7 @@ async function start() {
   try {
     const auth = await api('auth/status');
     if (!auth.me) { location.replace('/#entry'); return; }
-    const data = await api('session'); me = data.me; rooms = data.rooms; people = data.people; blockedUsers = data.blocks || []; hiddenChats = new Set(data.hiddenChats || []); renderBlockedUsers(); groupRooms = data.groups || [];
+    const data = await api('session'); me = data.me; rooms = data.rooms; if (Number.isSafeInteger(data.attachmentLimit)) attachmentLimit = data.attachmentLimit; people = data.people; blockedUsers = data.blocks || []; hiddenChats = new Set(data.hiddenChats || []); renderBlockedUsers(); groupRooms = data.groups || [];
     $('#identity-kind').textContent = me.account ? 'Persistent account' : 'Guest identity'; $('#account-security').hidden = !me.account;
     try { encryptionClient = await SilenzaCrypto.createClient(me.id, api); } catch(e) { encryptionError = e.message; }
     for (const person of data.conversations || []) conversations.set(person.id, person.alias);
@@ -691,8 +754,8 @@ async function start() {
     stream.addEventListener('moderation', () => { if (me.admin) refreshAdminState(); });
     setInterval(() => {
       let changed = false;
-      for (const message of messages) if (message.image && message.attachment?.expiresAt <= Date.now() && !message.imageExpired) {
-        message.imageExpired = true; revokeImage(message.id); changed = true;
+      for (const message of messages) if (message.file && message.attachment?.expiresAt <= Date.now() && !message.fileExpired) {
+        message.fileExpired = true; revokeFile(message.id); changed = true;
       }
       if (changed) renderMessages();
     }, 10000);
@@ -731,7 +794,7 @@ $('#test-sound').onclick = () => playSound().then(() => { $('#sound-status').tex
 function clearSignedOutPage() {
   revision++; current = null; groupState = null;
   stream?.close(); encryptionClient?.dispose(); encryptionClient = null; peerIdentity = null; verificationTarget = null;
-  messages = []; drafts.clear(); clearPendingImage(); clearImageURLs(); setReply(null);
+  messages = []; drafts.clear(); clearPendingFile(); clearFileURLs(); setReply(null);
   editingMessage = null; $('#edit-message-text').value = ''; $('#edit-message-dialog').close();
   $('#message').value = ''; renderMessages(); updateComposerState();
 }

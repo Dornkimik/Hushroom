@@ -8,7 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import assert from 'node:assert/strict';
-import { auditImages } from './image-privacy-audit.mjs';
+import { auditAttachments } from './attachment-privacy-audit.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const data = await mkdtemp(path.join(tmpdir(), 'silenzachat-groups-'));
@@ -77,16 +77,16 @@ try {
   if (process.env.GROUP_SCREENSHOT_DIR) await a.screenshot({ path: path.join(process.env.GROUP_SCREENSHOT_DIR, 'group-owner-desktop.png'), fullPage: true });
   await closeDetails(b);
   await closeDetails(a);
-  const imageAuditA = await auditImages(a), imageAuditB = await auditImages(b);
+  const imageAuditA = await auditAttachments(a), imageAuditB = await auditAttachments(b);
   const image = await a.evaluate(() => {
     const canvas = document.createElement('canvas'); canvas.width = 160; canvas.height = 100;
     const context = canvas.getContext('2d'); context.fillStyle = '#426e92'; context.fillRect(0, 0, 160, 100);
     return canvas.toDataURL('image/png').split(',')[1];
   });
   const attach = async page => {
-    assert.equal(await page.locator('#attach-image').isVisible(), true);
-    await page.locator('#image-input').setInputFiles({ name: 'secret-group-image.png', mimeType: 'image/png', buffer: Buffer.from(image, 'base64') });
-    await page.locator('#image-preview').waitFor({ state: 'visible' });
+    assert.equal(await page.locator('#attach-file').isVisible(), true);
+    await page.locator('#file-input').setInputFiles({ name: 'secret-group-image.png', mimeType: 'image/png', buffer: Buffer.from(image, 'base64') });
+    await page.locator('#attachment-preview').waitFor({ state: 'visible' });
   };
   await attach(a); await send(a, 'encrypted group image caption');
   await b.waitForFunction(() => [...document.querySelectorAll('.private-image')].some(img => img.complete && img.naturalWidth === 160));
@@ -186,7 +186,7 @@ try {
   await signOut(c, origin);
   assert.deepEqual(errors, []);
   const auditedImages = (await imageAuditA.verify(Buffer.from(image, 'base64'), 'secret-group-image.png')) + (await imageAuditB.verify(Buffer.from(image, 'base64'), 'secret-group-image.png'));
-  console.log(`PASS: ${auditedImages} group image uploads contain exact ciphertext; server returns unchanged ciphertext; no image plaintext or secret keys in captured requests`);
+  console.log(`PASS: ${auditedImages} group attachment uploads contain exact padded ciphertext; server returns unchanged ciphertext; no attachment plaintext or secret keys in captured requests`);
   console.log('PASS: open/invite-only rooms, membership isolation, encrypted delivery and replies, key verification, rules, counts, ownership transfer, kick/rejoin protection, reload, deletion, desktop/mobile layout');
 } finally {
   await browser?.close(); server.kill(); await once(server, 'exit');

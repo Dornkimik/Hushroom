@@ -29,7 +29,7 @@ test('own message edits enforce authorization, validation, encryption and confli
   function privatePayload(user, peer, text, extra = {}) {
     const id = randomUUID();
     const encrypted = encryption.encryptMessage({ id, sender: user.me.id, recipient: peer.me.id, text, ...extra }, user.identity, encryption.base64(peer.identity.publicKey));
-    return { id, peer: peer.me.id, encrypted, replyTo: extra.replyTo, attachmentId: extra.image?.id };
+    return { id, peer: peer.me.id, encrypted, replyTo: extra.replyTo, attachmentId: extra.file?.id };
   }
   const decrypt = (message, user, peer) => encryption.decryptMessage(message, user.me.id, user.identity, encryption.base64(peer.identity.publicKey));
   async function request(user, route, body, source = origin) {

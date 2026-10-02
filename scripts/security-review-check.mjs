@@ -53,7 +53,7 @@ async function dm(sender, recipient, text) {
 async function upload(sender, recipient) {
   const response = await fetch(`${origin}/api/attachments?peer=${recipient.me.id}`, { method: 'POST',
     headers: { Cookie: sender.cookie, Origin: origin, 'Content-Type': 'application/octet-stream' },
-    body: crypto.encryptImage(new Uint8Array([1])).bytes });
+    body: crypto.encryptAttachment(new Uint8Array([1])).bytes });
   assert.equal(response.status, 200); return (await response.json()).id;
 }
 async function download(user, id) {

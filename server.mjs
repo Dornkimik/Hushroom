@@ -44,7 +44,10 @@ const attachmentTTL = Number(process.env.ATTACHMENT_TTL_SECONDS || 86400) * 1000
 if (!Number.isFinite(attachmentTTL) || attachmentTTL < 1000 || attachmentTTL > 86400000) throw new Error('ATTACHMENT_TTL_SECONDS must be between 1 and 86400.');
 const attachmentStorage = Number(process.env.ATTACHMENT_STORAGE_MB || 256) * 1024 * 1024;
 if (!Number.isFinite(attachmentStorage) || attachmentStorage < 16 * 1024 * 1024) throw new Error('ATTACHMENT_STORAGE_MB must be at least 16.');
-const attachments = new Attachments({ ttl: attachmentTTL, maxBytes: attachmentStorage });
+const attachmentMax = Number(process.env.ATTACHMENT_MAX_MB || 16) * 1024 * 1024;
+if (!Number.isSafeInteger(attachmentMax) || attachmentMax < 1024 * 1024 || attachmentMax > 64 * 1024 * 1024) throw new Error('ATTACHMENT_MAX_MB must be a whole number between 1 and 64.');
+if (attachmentStorage < attachmentMax) throw new Error('ATTACHMENT_STORAGE_MB must be at least ATTACHMENT_MAX_MB.');
+const attachments = new Attachments({ ttl: attachmentTTL, maxBytes: attachmentStorage, maxItem: attachmentMax });
 const sessions = new Map();
 const sessionById = id => { for (const s of sessions.values()) if (s.id === id) return s; };
 const histories = new Histories({ attachments, clientOf: id => sessionById(id)?.clientKey });
@@ -186,7 +189,7 @@ function base64Bytes(value, length, maximum = length) {
 }
 function contentLength(req) {
   const value = req.headers['content-length'];
-  if (typeof value !== 'string' || !/^\d{1,9}$/.test(value)) fail(411, 'Image uploads need a Content-Length.');
+  if (typeof value !== 'string' || !/^\d{1,9}$/.test(value)) fail(411, 'Attachment uploads need a Content-Length.');
   return Number(value);
 }
 async function body(req, maximum = 32768) {
@@ -202,12 +205,12 @@ const server = http.createServer(async (req, res) => {
   res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
   res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
   if (configuredOrigin?.startsWith('https://')) res.setHeader('Strict-Transport-Security', 'max-age=31536000');
-  res.setHeader('Content-Security-Policy', "default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' blob:; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+  res.setHeader('Content-Security-Policy', "default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' blob:; media-src blob:; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
   const json = (data, status = 200) => { res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(data)); };
   try {
     const url = new URL(req.url, 'http://localhost');
     if (!url.pathname.startsWith('/api/')) {
-      const files = { '/': ['about.html', 'text/html'], '/chat/': ['index.html', 'text/html'], '/robots.txt': ['robots.txt', 'text/plain'], '/sitemap.xml': ['sitemap.xml', 'application/xml'], '/about.css': ['about.css', 'text/css'], '/feedback.js': ['feedback.js', 'text/javascript'], '/auth.js': ['auth.js', 'text/javascript'], '/app.js': ['app.js', 'text/javascript'], '/groups.js': ['groups.js', 'text/javascript'], '/crypto.js': ['crypto.js', 'text/javascript'], '/private.js': ['private.js', 'text/javascript'], '/vendor/nacl.js': ['../node_modules/tweetnacl/nacl-fast.min.js', 'text/javascript'], '/theme.js': ['theme.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'], '/favicon.svg': ['favicon.svg', 'image/svg+xml'] };
+      const files = { '/': ['about.html', 'text/html'], '/chat/': ['index.html', 'text/html'], '/robots.txt': ['robots.txt', 'text/plain'], '/sitemap.xml': ['sitemap.xml', 'application/xml'], '/about.css': ['about.css', 'text/css'], '/feedback.js': ['feedback.js', 'text/javascript'], '/auth.js': ['auth.js', 'text/javascript'], '/app.js': ['app.js', 'text/javascript'], '/groups.js': ['groups.js', 'text/javascript'], '/crypto.js': ['crypto.js', 'text/javascript'], '/attachments.js': ['attachments.js', 'text/javascript'], '/vendor/nacl.js': ['../node_modules/tweetnacl/nacl-fast.min.js', 'text/javascript'], '/theme.js': ['theme.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'], '/favicon.svg': ['favicon.svg', 'image/svg+xml'] };
       if (req.method === 'GET' && ['/about', '/about/', '/chat'].includes(url.pathname)) { res.writeHead(301, { Location: url.pathname === '/chat' ? '/chat/' : '/' }); res.end(); return; }
       if (req.method !== 'GET' || !files[url.pathname]) fail(404, 'Not found.');
       const [file, type] = files[url.pathname];
@@ -277,7 +280,7 @@ const server = http.createServer(async (req, res) => {
       }
       session.seen = Date.now();
       const conversations = [...sessions.values()].filter(s => s.id !== session.id && histories.has(keyFor(session, null, s.id)) && !session.hiddenChats?.has(s.id) && !blocks.between(session, s)).map(safeUser);
-      json({ me: publicSession(session), rooms: roomList(), groups: groups.list(session), people: onlinePeople(session), conversations, ...privatePreferences(session) }); return;
+      json({ me: publicSession(session), attachmentLimit: attachments.maxItem, rooms: roomList(), groups: groups.list(session), people: onlinePeople(session), conversations, ...privatePreferences(session) }); return;
     }
     if (!session) fail(401, 'Your anonymous session expired. Refresh to rejoin.');
     session.seen = Date.now();
@@ -301,7 +304,7 @@ const server = http.createServer(async (req, res) => {
         const group = groups.get(url.searchParams.get('group')), version = Number(url.searchParams.get('version'));
         groups.member(group, session);
         if (!session.publicKey || version !== group.version) fail(409, 'Room membership changed. Try sending again.');
-        if (req.headers['content-type'] !== 'application/octet-stream') fail(415, 'Upload encrypted image bytes only.');
+        if (req.headers['content-type'] !== 'application/octet-stream') fail(415, 'Upload encrypted attachment bytes only.');
         const uploaded = await attachments.upload(req, session.id, null, { group: group.id, version }, session.clientKey, contentLength(req));
         if (sessions.get(token) !== session || groups.rooms.get(group.id) !== group || group.updated + 86400000 <= Date.now() || !group.members.has(session.id) || group.version !== version) {
           attachments.remove(uploaded.id); fail(409, 'Room membership changed during upload. Try sending again.');
@@ -312,7 +315,7 @@ const server = http.createServer(async (req, res) => {
       if (!peer || peer.id === session.id) fail(404, 'That person is no longer available.');
       ensurePrivateAllowed(session, peer);
       if (!session.publicKey || !peer.publicKey) fail(409, 'Both people need encryption identities before uploading.');
-      if (req.headers['content-type'] !== 'application/octet-stream') fail(415, 'Upload encrypted image bytes only.');
+      if (req.headers['content-type'] !== 'application/octet-stream') fail(415, 'Upload encrypted attachment bytes only.');
       const uploaded = await attachments.upload(req, session.id, peer.id, {}, session.clientKey, contentLength(req));
       // A ban or session expiry may have happened while reading the upload.
       if (sessions.get(token) !== session || ![...sessions.values()].includes(peer)) { attachments.remove(uploaded.id); fail(403, 'This private session is no longer available.'); }
@@ -326,7 +329,7 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': item.bytes.length, 'Cache-Control': 'no-store', 'Content-Disposition': 'attachment' }); res.end(item.bytes); return;
       }
       if (req.method === 'DELETE' && item.owner === session.id && !item.message) { attachments.remove(id); json({ ok: true }); return; }
-      fail(403, 'That image cannot be removed here.');
+      fail(403, 'That attachment cannot be removed here.');
     }
     if (url.pathname === '/api/events' && req.method === 'GET') {
       if (session.streams.size >= 6) fail(429, 'Too many open tabs.');

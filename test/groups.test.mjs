@@ -23,19 +23,19 @@ function setup() {
   return { store, attachments, users, events, call, send, advance: ms => { time += ms; } };
 }
 
-test('group images authenticate descriptors, isolate memberships and clean up with messages and rooms', async () => {
+test('group attachments authenticate descriptors, isolate memberships and clean up with messages and rooms', async () => {
   const { store, attachments, users: [a,b,c], call, send, advance } = setup();
   const group = call(a, 'create', { name: 'Images' }).id; call(b, 'join', { group });
-  const plain = new TextEncoder().encode('private group image bytes'), encrypted = crypto.encryptImage(plain);
+  const plain = new TextEncoder().encode('private group attachment bytes'), encrypted = crypto.encryptAttachment(plain);
   async function upload(room = group, peer = null) {
     const version = store.get(room).version;
     return attachments.upload(Readable.from([encrypted.bytes]), a.id, peer, peer ? {} : { group: room, version });
   }
   function payload(id, room = group) {
     const state = call(a, 'state', { group: room }, 'GET'), mid = randomUUID();
-    const image = { id, key: encrypted.key, nonce: encrypted.nonce, type: 'image/webp', width: 1, height: 1, size: plain.length };
+    const file = { id, key: encrypted.key, nonce: encrypted.nonce, kind: 'image', type: 'image/webp', width: 1, height: 1, size: plain.length };
     return { id: mid, group: room, version: state.version, attachmentId: id,
-      envelopes: crypto.encryptGroupMessage({ id: mid, group: room, version: state.version, sender: a.id, text: '', image }, a.identity, state.members) };
+      envelopes: crypto.encryptGroupMessage({ id: mid, group: room, version: state.version, sender: a.id, text: '', file }, a.identity, state.members) };
   }
   const first = await upload();
   assert.throws(() => attachments.get(first.id, b.id), /unavailable/);
@@ -44,7 +44,7 @@ test('group images authenticate descriptors, isolate memberships and clean up wi
   const received = call(b, 'history', { group }, 'GET')[0];
   const decoded = crypto.decryptGroupMessage(received, b.id, b.identity, a.publicKey);
   assert.equal(decoded.text, '');
-  assert.deepEqual(crypto.decryptImage(attachments.get(first.id, b.id).bytes, decoded.image), plain);
+  assert.deepEqual(crypto.decryptAttachment(attachments.get(first.id, b.id).bytes, decoded.file), plain);
   assert.throws(() => crypto.decryptGroupMessage({ ...received, attachment: { id: 'substituted' } }, b.id, b.identity, a.publicKey), /metadata/);
   assert.throws(() => crypto.decryptGroupMessage({ ...received, attachment: null }, b.id, b.identity, a.publicKey), /metadata/);
   assert.throws(() => attachments.get(first.id, c.id), /unavailable/);
@@ -53,9 +53,9 @@ test('group images authenticate descriptors, isolate memberships and clean up wi
   call(a, 'message-delete', { group, id: message.id }); assert.equal(attachments.items.has(first.id), false);
   const otherRoom = call(a, 'create', { name: 'Other' }).id;
   const uploadOther = await upload(otherRoom);
-  assert.throws(() => call(a, 'message', payload(uploadOther.id)), /Invalid image/);
+  assert.throws(() => call(a, 'message', payload(uploadOther.id)), /Invalid attachment/);
   const dm = await upload(group, c.id);
-  assert.throws(() => call(a, 'message', payload(dm.id)), /Invalid image/);
+  assert.throws(() => call(a, 'message', payload(dm.id)), /Invalid attachment/);
   const pending = await upload();
   assert.throws(() => attachments.claim(pending.id, a.id, null, randomUUID()), /Invalid/);
   call(c, 'leave', { group }); call(c, 'join', { group });
@@ -63,7 +63,7 @@ test('group images authenticate descriptors, isolate memberships and clean up wi
   const published = await upload(); const posted = call(a, 'message', payload(published.id));
   call(c, 'leave', { group }); call(c, 'join', { group });
   assert.throws(() => store.checkAttachment(attachments.items.get(published.id), c), /unavailable/);
-  // Evicting a message also removes its encrypted image bytes.
+  // Evicting a message also removes its encrypted attachment bytes.
   for (let i = 0; i < 100; i++) { advance(10001); call(a, 'message', send(a, group)); }
   assert.ok(!store.get(group).history.some(m => m.id === posted.id)); assert.equal(attachments.items.has(published.id), false);
   const finalUpload = await upload(); call(a, 'message', payload(finalUpload.id));

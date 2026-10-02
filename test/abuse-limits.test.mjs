@@ -6,7 +6,7 @@ import nacl from 'tweetnacl';
 import crypto from '../public/crypto.js';
 import { Security, sessionCapacity, trustedProxyList, SESSIONS_PER_CLIENT } from '../lib/security.mjs';
 import { Histories } from '../lib/histories.mjs';
-import { Attachments, MAX_IMAGE_BYTES } from '../lib/attachments.mjs';
+import { Attachments, MAX_ATTACHMENT_BYTES } from '../lib/attachments.mjs';
 import { Groups } from '../lib/groups.mjs';
 
 const req = (ip, forwarded) => ({ socket: { remoteAddress: ip }, headers: forwarded ? { 'x-forwarded-for': forwarded } : {} });
@@ -74,8 +74,8 @@ test('private history storage is charged to the sending network, leaving room fo
   assert.doesNotThrow(() => history.set('dm:a3:a4', [msg('a3')]));
 });
 
-test('encrypted image storage has a per-network share', async () => {
-  const attachments = new Attachments({ maxBytes: 1024 * 1024 * 1024, perUser: 1024 * 1024 * 1024, perClient: MAX_IMAGE_BYTES + 48 });
+test('encrypted attachment storage has a per-network share', async () => {
+  const attachments = new Attachments({ maxBytes: 1024 * 1024 * 1024, perUser: 1024 * 1024 * 1024, perClient: MAX_ATTACHMENT_BYTES + 48 });
   const bytes = () => Readable.from([new Uint8Array(32)]);
   await attachments.upload(bytes(), 'a1', 'v', {}, 'attacker');
   await attachments.upload(bytes(), 'a2', 'v', {}, 'attacker');

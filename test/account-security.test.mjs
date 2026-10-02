@@ -8,7 +8,7 @@ import path from 'node:path';
 import net from 'node:net';
 import http from 'node:http';
 import { Readable } from 'node:stream';
-import { Attachments } from '../lib/attachments.mjs';
+import { Attachments, MAX_ATTACHMENT_BYTES } from '../lib/attachments.mjs';
 
 async function freePort() {
   const probe = net.createServer(); probe.listen(0, '127.0.0.1'); await once(probe, 'listening');
@@ -88,7 +88,7 @@ test('uploads reserve only their declared length and must match it', async () =>
   const body = size => Readable.from([Buffer.alloc(size)]);
   await assert.rejects(attachments.upload(body(32), 'a', 'b', {}, 'c', 40), { status: 400 });
   await assert.rejects(attachments.upload(body(64), 'a', 'b', {}, 'c', 40), { status: 413 });
-  await assert.rejects(attachments.upload(body(32), 'a', 'b', {}, 'c', 5 * 1024 * 1024), { status: 413 });
+  await assert.rejects(attachments.upload(body(32), 'a', 'b', {}, 'c', MAX_ATTACHMENT_BYTES + 1), { status: 413 });
   // A slow upload that declared 400 bytes leaves the remaining capacity usable.
   let release; const slow = attachments.upload(Readable.from((async function* () { await new Promise(r => { release = r; }); yield Buffer.alloc(400); })()), 'a', 'b', {}, 'slow', 400);
   await new Promise(r => setImmediate(r));

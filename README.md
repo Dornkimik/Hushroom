@@ -10,13 +10,13 @@ You appear under a random alias. Choose someone in **In good company** to start 
 
 ### Public rooms and private chats
 
-Public-room messages are visible to other visitors and are not end-to-end encrypted. In private chats, text, captions, mentions, and images are encrypted in your browser and decrypted in the participants’ browsers. The server relays the encrypted content; admin controls do not provide keys to read private chats.
+Public-room messages are visible to other visitors and are not end-to-end encrypted. In private chats, text, captions, mentions, and attachments are encrypted in your browser and decrypted in the participants’ browsers. The server relays the encrypted content; admin controls do not provide keys to read private chats.
 
 This protection depends on trusting the website code delivered to your browser. Someone who controls the website could change that code to capture messages or keys. A compromised device or browser extension could expose them too.
 
 ### Blocking and removing private chats
 
-Choose **Block** beside someone in **In good company**, or **Block user** in a private chat, to stop private messages, edits, and new image uploads in both directions. Account blocks apply to all of that account's sessions and survive sign-out and server restarts. Guest blocks last for the current guest session. Open **Sound & account settings** to unblock someone. Blocking does not hide people or messages in shared public or temporary rooms.
+Choose **Block** beside someone in **In good company**, or **Block user** in a private chat, to stop private messages, edits, and new attachment uploads in both directions. Account blocks apply to all of that account's sessions and survive sign-out and server restarts. Guest blocks last for the current guest session. Open **Sound & account settings** to unblock someone. Blocking does not hide people or messages in shared public or temporary rooms.
 
 Choose **×** beside a private chat to remove it from your sidebar. This also clears its unread count and local draft. Removal survives refresh in that session and applies to its other open tabs. It leaves the conversation and messages available to the other participant; a new message or selecting the person again restores it.
 
@@ -26,7 +26,7 @@ Run `npm run test:private-controls:browser` to check blocking, unblocking, sideb
 
 Choose **＋ Create** beside **Temporary rooms** to create a user-owned room. Give it a name, description, and rules, and choose **Open to everyone** or **Invite only**. Invite-only rooms appear in the chat directory only to their members and invited sessions; owners invite people from **Room details & members**. Owners can edit details and access, kick members, transfer ownership to another member, or delete the room. Members can leave; an owner with other members must transfer ownership or delete the room first.
 
-Room text, images, captions, replies, and mentions are end-to-end encrypted using the same browser identities and authenticated encryption as private chats. Each message is encrypted separately for every current member, including its sender. Use **＋** to attach an image with an optional caption, and **Verify identity** beside a member to compare identity codes through another trusted channel. Names, descriptions, rules, membership, and message counts are metadata visible to the server. Open rooms can be joined by anyone, so use invite-only access for a restricted conversation.
+Room text, attachments, captions, replies, and mentions are end-to-end encrypted using the same browser identities and authenticated encryption as private chats. Each message is encrypted separately for every current member, including its sender. Use **＋** to attach a photo, GIF, video, audio clip or file with an optional caption, and **Verify identity** beside a member to compare identity codes through another trusted channel. Names, descriptions, rules, membership, and message counts are metadata visible to the server. Open rooms can be joined by anyone, so use invite-only access for a restricted conversation.
 
 New members receive only future messages. Leaving and rejoining starts a new membership. Kicking a member blocks this session from rejoining and excludes it from subsequent message delivery and encryption; it cannot erase copies already received. A changed membership list requires the sender to encrypt again before sending. Room owners see each current member’s total accepted messages during that membership, including deleted messages. Other members do not receive these counters.
 
@@ -44,23 +44,23 @@ Run `npm run test:feedback:browser` to check submission, retries, responsive lay
 
 ### Privacy and identity
 
-A random alias means you do not have to provide an account or real name, but it does not make you untraceable. The server can see connection IP addresses, aliases, who is talking to whom, message times, encrypted data sizes, and reply or attachment relationships. A hosting provider or reverse proxy may keep its own logs. What you write or show in an image could identify you as well.
+A random alias means you do not have to provide an account or real name, but it does not make you untraceable. The server can see connection IP addresses, aliases, who is talking to whom, message times, encrypted data sizes, and reply or attachment relationships. A hosting provider or reverse proxy may keep its own logs. What you write, or show in a photo or video, could identify you as well.
 
 The app does not write chat contents or IP addresses to its own log files. It uses temporary, process-local hashed address identifiers for creation, sign-in and connection limits. A reverse proxy must be explicitly configured as trusted for those limits to distinguish visitors correctly.
 
 To check a private-chat partner’s encryption key, choose **Verify identity** and compare the entire code in person, on a call, or through another trusted channel. Only mark the codes as matching after an independent comparison. This confirms the key you checked, not someone’s real-world identity. If a key changes unexpectedly, pause and check with the person before continuing.
 
-### Images and message history
+### Attachments and message history
 
-Images can be sent in private chats and temporary encrypted rooms. Your browser resizes each image, removes the original file metadata by re-encoding it, then encrypts it before upload. JPEG, PNG, and WebP images are accepted. The original filename is not sent; the image key is shared inside the encrypted message. In a room, only members addressed by that message can download its image while they remain in the same membership. Newcomers, kicked members, and members who leave and rejoin cannot download earlier images. Deleting the message or room also removes its stored image bytes. The server temporarily holds encrypted image data in memory, not as image files on disk.
+Attachments can be sent in private chats and temporary encrypted rooms: photos (JPEG, PNG, WebP), GIFs, videos (MP4, MOV, WebM), audio (MP3, M4A, WebM, WAV) and any other file. For the media formats, your browser removes hidden metadata (EXIF and GPS location, XMP, ICC profiles, comments, thumbnails, container titles and timestamps, encoder names) by rewriting the file container at the byte level, then encrypts it before upload. Pixels and audio/video samples are never decoded or re-encoded, so no canvas is involved and the output does not depend on the browser's graphics stack. The original filename of media is not sent. Any other file is encrypted together with its name but otherwise sent unchanged, and the composer says so before sending. The file key is shared inside the encrypted message, and the encrypted size is padded to a coarse size class. In a room, only members addressed by that message can download its attachment while they remain in the same membership. Newcomers, kicked members, and members who leave and rejoin cannot download earlier attachments. Deleting the message or room also removes its stored bytes. The server temporarily holds encrypted attachment data in memory, not as files on disk.
 
-Metadata removal cannot hide details visible in the picture, and the recipient can save or share a decrypted copy. Choose **Delete** on your own public or private message to remove it for everyone, including an attached image. Deletion cannot remove screenshots, downloads, or copies someone has already made.
+Metadata removal cannot hide details visible or audible in the content, and the recipient can save or share a decrypted copy. Choose **Delete** on your own public or private message to remove it for everyone, including its attachment. Deletion cannot remove screenshots, downloads, or copies someone has already made.
 
-Announcements are retained on disk until an admin deletes them. In other conversations, only the latest 100 messages are kept in server memory. Messages disappear when the server restarts; private sessions expire after 24 hours offline and private histories after 24 hours without a message change. Private storage also has byte and conversation limits, so a full store can reject sends or edits until space is freed. Images expire within 24 hours of upload, or sooner if the host configures a shorter period. They can also disappear when their message is deleted or leaves recent history, a participant is banned or their session expires, or the server restarts. This is a temporary chat, not a permanent inbox or backup.
+Announcements are retained on disk until an admin deletes them. In other conversations, only the latest 100 messages are kept in server memory. Messages disappear when the server restarts; private sessions expire after 24 hours offline and private histories after 24 hours without a message change. Private storage also has byte and conversation limits, so a full store can reject sends or edits until space is freed. Attachments expire within 24 hours of upload, or sooner if the host configures a shorter period. They can also disappear when their message is deleted or leaves recent history, a participant is banned or their session expires, or the server restarts. This is a temporary chat, not a permanent inbox or backup.
 
 ### Your browser identity
 
-Logging in or registering while using a guest identity starts a separate account session with new encryption keys. It ends the guest's private conversations and temporary-room memberships and clears their server-held private history and images. Previous public posts keep their guest alias. Account access does not publish a direct mapping to the old guest sender ID; message contents and timing can still identify you.
+Logging in or registering while using a guest identity starts a separate account session with new encryption keys. It ends the guest's private conversations and temporary-room memberships and clears their server-held private history and attachments. Previous public posts keep their guest alias. Account access does not publish a direct mapping to the old guest sender ID; message contents and timing can still identify you.
 
 Your browser stores a session cookie, encryption keys, remembered peer identities, and your theme preference. Decrypted messages and unsent drafts stay in the current page’s memory; SilenzaChat does not save a permanent local chat archive.
 
@@ -76,7 +76,7 @@ Encryption cannot protect a compromised device or a modified website, and a reci
 
 ## Developer documentation
 
-SilenzaChat is a self-hosted Node.js application with a browser client. The browser encrypts private messages and images; the server relays ciphertext and manages temporary sessions, public rooms, and recent message history. Source code: [Dornkimik/SilenzaChat on GitHub](https://github.com/Dornkimik/SilenzaChat).
+SilenzaChat is a self-hosted Node.js application with a browser client. The browser encrypts private messages and attachments; the server relays ciphertext and manages temporary sessions, public rooms, and recent message history. Source code: [Dornkimik/SilenzaChat on GitHub](https://github.com/Dornkimik/SilenzaChat).
 
 ### Project layout
 
@@ -86,7 +86,7 @@ SilenzaChat is a self-hosted Node.js application with a browser client. The brow
 | `public/style.css` | Colors, typography, spacing, and responsive layout |
 | `public/app.js` | Browser interactions and live updates |
 | `public/crypto.js` | Browser keys, identity verification, and authenticated encryption |
-| `public/private.js` | Local image preparation |
+| `public/attachments.js` | Local, canvas-free attachment metadata removal and format checks |
 | `lib/attachments.mjs` | Temporary encrypted attachment storage and quotas |
 | `server.mjs` | Chat server, temporary identities, rooms, and admin controls |
 | `SECURITY.md` | Private-chat security model and limitations |
@@ -126,7 +126,7 @@ Main/public rooms created under Room management are saved in `rooms.json` on tha
 
 If you currently have rooms you want to keep on an ephemeral deployment, copy its `rooms.json` into the volume before starting the new deployment. Data already lost in an earlier deployment cannot be recovered by this change. Keep the volume attached to the same service and use one replica. The app logs a storage warning on Railway if the selected data directory is outside the attached volume.
 
-Put HTTPS in front of the server and keep the `data` directory on persistent storage. Configure the proxy to allow streaming responses on `/api/events`, with buffering disabled and a timeout longer than the 20-second heartbeat. Install production dependencies with `npm ci --omit=dev`, then start with `npm start`. HTTPS (or localhost) and IndexedDB are required for private chats. Configure the reverse proxy to accept encrypted uploads up to 4 MB plus 16 bytes. Set `ATTACHMENT_TTL_SECONDS` to 1–86400 to shorten image retention; the default is 86400.
+Put HTTPS in front of the server and keep the `data` directory on persistent storage. Configure the proxy to allow streaming responses on `/api/events`, with buffering disabled and a timeout longer than the 20-second heartbeat. Install production dependencies with `npm ci --omit=dev`, then start with `npm start`. HTTPS (or localhost) and IndexedDB are required for private chats. Configure the reverse proxy to accept encrypted uploads up to the attachment limit (16 MB by default; set `ATTACHMENT_MAX_MB` to 1–64 to change it). Uploads must complete within the server's 60-second request timeout. Set `ATTACHMENT_TTL_SECONDS` to 1–86400 to shorten attachment retention; the default is 86400. `ATTACHMENT_STORAGE_MB` (default 256) bounds the memory used by all attachments; each network address may use three times the attachment limit.
 
 Run **one server process / one replica**. Sessions and message histories are held in that process; multiple replicas need a shared identity store and message broker. The app includes message limits, admin login throttling, origin checks, escaped text rendering, and security headers. Larger public communities also need host-level abuse protection, moderation/reporting controls, and appropriate load testing.
 
@@ -156,7 +156,7 @@ For browser tests, install dependencies with `npm ci`, install Chromium with `np
 
 ### Editing messages
 
-Choose **Edit** on your own message to change its text or image caption, then **Save changes**. Cancel keeps the original message and your unsent draft. Edited messages show an **(edited)** label and update for other participants, including reply previews. Attached images stay unchanged. Only the sender can edit; admin and room-owner roles do not grant permission to edit other people�s messages.
+Choose **Edit** on your own message to change its text or caption, then **Save changes**. Cancel keeps the original message and your unsent draft. Edited messages show an **(edited)** label and update for other participants, including reply previews. Attachments stay unchanged. Only the sender can edit; admin and room-owner roles do not grant permission to edit other people�s messages.
 
 Private and temporary-room edits remain end-to-end encrypted. An older room message is updated only for original recipients who still have access; later members cannot see it. Deleted or expired messages cannot be edited. Concurrent edits are rejected so you can reopen the latest version. Sending and editing share the existing rate limit. Run `npm run test:editing:browser` for browser coverage.
 

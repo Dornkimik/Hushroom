@@ -208,14 +208,18 @@ dialog input { width: 100%; padding: 12px; border: 1px solid var(--line); border
 #emoji-grid p { grid-column: 1 / -1; color: var(--muted); }
 #command-status { color: var(--accent); font-size: 12px; line-height: 1.6; }
 
-#attach-image { flex-shrink: 0; width: 36px; height: 36px; background: var(--panel); color: var(--accent); border-radius: 7px; font-size: 24px; }
+#attach-file { flex-shrink: 0; width: 36px; height: 36px; background: var(--panel); color: var(--accent); border-radius: 7px; font-size: 24px; }
 #verify-identity { background: transparent; color: var(--accent); text-decoration: underline; padding: 4px; }
-#image-preview { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; padding: 8px; background: var(--panel); border-radius: 8px; }
-#image-preview img { width: 64px; height: 64px; object-fit: contain; border-radius: 5px; }
-#image-preview span { flex: 1; font-size: 12px; color: var(--muted); }
-#image-preview button { padding: 8px; background: transparent; font-size: 24px; }
-.private-image { display: block; max-width: min(100%, 420px); height: auto; max-height: 420px; object-fit: contain; border-radius: 8px; margin-top: 8px; }
-.image-note { color: var(--muted); font-size: 11px; }
+#attachment-preview { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; padding: 8px; background: var(--panel); border-radius: 8px; }
+.attachment-thumb { flex-shrink: 0; width: 64px; height: 64px; object-fit: contain; border-radius: 5px; }
+.attachment-icon { display: grid; place-items: center; background: var(--bg); color: var(--accent); font-size: 28px; }
+.attachment-detail { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: 12px; color: var(--muted); }
+#attachment-preview button { padding: 8px; background: transparent; font-size: 24px; }
+.private-image, .private-video { display: block; max-width: min(100%, 420px); height: auto; max-height: 420px; object-fit: contain; border-radius: 8px; margin-top: 8px; }
+.private-audio { display: block; width: min(100%, 420px); margin-top: 8px; }
+.attachment-note { color: var(--muted); font-size: 11px; }
+.attachment-button { margin-top: 8px; max-width: min(100%, 420px); padding: 8px 12px; overflow-wrap: anywhere; text-align: left; background: var(--panel); color: var(--accent); border-radius: 7px; }
+.attachment-save { display: inline-block; margin-top: 4px; color: var(--accent); font-size: 12px; }
 #verification-code { white-space: pre-wrap; overflow-wrap: anywhere; padding: 16px; background: var(--panel); border-radius: 8px; line-height: 1.8; }
 @media (max-width: 600px) { #composer { gap: 5px; padding-left: 10px; } }
 
@@ -255,9 +259,9 @@ h1 { font-size: 19px; font-weight: 700; letter-spacing: 0; }
 #composer { gap: 8px; padding: 8px; border: 2px solid var(--line); border-radius: 0; background: var(--side); }
 #composer:focus-within { border-color: var(--accent); box-shadow: 3px 3px 0 var(--accent-soft); }
 textarea { padding-left: 5px; }
-.send-button, #emoji-toggle, #attach-image { border-radius: 0; }
+.send-button, #emoji-toggle, #attach-file { border-radius: 0; }
 .send-button { width: 38px; height: 38px; background: var(--accent); color: var(--accent-ink); }
-#emoji-toggle, #attach-image { background: var(--panel); color: var(--text); }
+#emoji-toggle, #attach-file { background: var(--panel); color: var(--text); }
 .people-sidebar { background: var(--side); border-left: 3px solid var(--line); }
 .people-header h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .5px; }
 .people-header > span { min-width: 22px; padding: 4px; border: 1px solid var(--line); text-align: center; }
@@ -276,8 +280,8 @@ dialog input, #emoji-search { border: 1px solid var(--line); border-radius: 0; b
 .reply-preview { border-radius: 0; }
 .reply-quote { border-radius: 0; }
 #suggestions, #emoji-picker { border: 2px solid var(--line); border-radius: 0; background: var(--side); }
-#suggestions button, #emoji-grid button, #emoji-search, #image-preview { border-radius: 0; }
-#image-preview img, .private-image { border-radius: 0; }
+#suggestions button, #emoji-grid button, #emoji-search, #attachment-preview, .attachment-button { border-radius: 0; }
+.attachment-thumb, .private-image, .private-video { border-radius: 0; }
 #verification-code { border-radius: 0; border-left: 3px solid var(--accent); }
 .faq-dialog h2 { font-size: 22px; }
 .faq-section h3 { text-transform: uppercase; letter-spacing: .6px; }
@@ -389,9 +393,9 @@ h1 { font-size: 21px; font-weight: 650; letter-spacing: 0; }
 #composer { gap: 10px; padding: 8px 9px 8px 14px; border-width: 1px; border-radius: 12px; background: var(--side); }
 #composer:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 textarea { padding-left: 0; }
-.send-button, #emoji-toggle, #attach-image { border-radius: 8px; }
+.send-button, #emoji-toggle, #attach-file { border-radius: 8px; }
 .send-button { width: 38px; height: 38px; }
-#emoji-toggle, #attach-image { background: var(--panel); color: var(--muted); }
+#emoji-toggle, #attach-file { background: var(--panel); color: var(--muted); }
 .people-sidebar { border-left-width: 2px; }
 .people-header h2 { font-size: 13px; text-transform: none; letter-spacing: 0; }
 .people-header > span { min-width: 22px; padding: 3px 6px; border: 0; border-radius: 999px; background: var(--panel); text-align: center; }
@@ -409,8 +413,8 @@ dialog input, #emoji-search { border-radius: 7px; background: var(--side); }
 .unread { border-radius: 10px; }
 .reply-preview, .reply-quote { border-radius: 7px; }
 #suggestions, #emoji-picker { border-width: 1px; border-radius: 10px; background: var(--side); }
-#suggestions button, #emoji-grid button, #emoji-search, #image-preview { border-radius: 7px; }
-#image-preview img, .private-image { border-radius: 7px; }
+#suggestions button, #emoji-grid button, #emoji-search, #attachment-preview, .attachment-button { border-radius: 7px; }
+.attachment-thumb, .private-image, .private-video { border-radius: 7px; }
 #verification-code { border-radius: 8px; border-left-width: 2px; }
 .faq-section h3 { text-transform: none; letter-spacing: 0; }
 .faq-section details { border-top-style: solid; }

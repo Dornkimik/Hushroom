@@ -53,7 +53,7 @@ try {
     const sample = kind === 'private' ? forged : { id: randomUUID(), sender: peer.id, senderKey, group: groupId, version: 2,
       alias: peer.alias, text: forged.text, time: forged.time, reply: null, attachment: null };
     for (const encrypted of [undefined, null, { v: 1 }, { v: 9 }, { v: 1, nonce: crypto.base64(new Uint8Array(24)), ciphertext: crypto.base64(new Uint8Array(32)) }]) {
-      const input = { ...sample, id: randomUUID(), encrypted, image: { id: 'untrusted-image' }, mentions: [{ start: 0, end: 1, id: ownId }] };
+      const input = { ...sample, id: randomUUID(), encrypted, file: { id: 'untrusted-file' }, mentions: [{ start: 0, end: 1, id: ownId }] };
       await a.evaluate(message => receive(message), input);
       assert.equal(await a.getByText(forged.text, { exact: true }).count(), 0);
       assert.equal(await a.evaluate(id => messages.find(message => message.id === id).locked, input.id), true);

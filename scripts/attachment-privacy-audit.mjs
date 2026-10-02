@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import crypto from '../public/crypto.js';
 
 // Test-only instrumentation. Secrets stay in the test process and are never logged or uploaded.
-export async function auditImages(page) {
+export async function auditAttachments(page) {
   const requests = [], uploads = [], roundTrips = [], errors = [];
   page.on('request', request => {
     const body = request.postDataBuffer();
@@ -34,33 +34,37 @@ export async function auditImages(page) {
   });
   const snapshots = [];
   // Capture the input and output of the real encryptor, without replacing its implementation.
-  await page.exposeFunction('__auditImage', sample => snapshots.push(sample));
+  await page.exposeFunction('__auditAttachment', sample => snapshots.push(sample));
   await page.evaluate(() => {
-    const encrypt = SilenzaCrypto.encryptImage;
-    SilenzaCrypto.encryptImage = bytes => {
+    const encrypt = SilenzaCrypto.encryptAttachment;
+    SilenzaCrypto.encryptAttachment = bytes => {
       const result = encrypt(bytes);
-      window.__auditImage({ plain: SilenzaCrypto.base64(bytes), cipher: SilenzaCrypto.base64(result.bytes), key: result.key, nonce: result.nonce });
+      window.__auditAttachment({ plain: SilenzaCrypto.base64(bytes), cipher: SilenzaCrypto.base64(result.bytes), key: result.key, nonce: result.nonce });
       return result;
     };
   });
   return {
+    // Metadata planted in a test file must already be gone when the bytes reach the encryptor.
+    assertNeverEncrypted(value) {
+      for (const sample of snapshots) assert.equal(Buffer.from(sample.plain, 'base64').includes(Buffer.from(value)), false, `Encrypted attachment still contained "${value}".`);
+    },
     async assertFailsClosed(original) {
-      await page.locator('#image-input').setInputFiles({ name: 'failure-probe.png', mimeType: 'image/png', buffer: original });
-      await page.locator('#image-preview').waitFor({ state: 'visible' });
+      await page.locator('#file-input').setInputFiles({ name: 'failure-probe.png', mimeType: 'image/png', buffer: original });
+      await page.locator('#attachment-preview').waitFor({ state: 'visible' });
       await page.evaluate(() => {
-        window.__auditSavedEncryptImage = SilenzaCrypto.encryptImage;
-        SilenzaCrypto.encryptImage = () => { throw new Error('Audit: image encryption failed'); };
+        window.__auditSavedEncryptAttachment = SilenzaCrypto.encryptAttachment;
+        SilenzaCrypto.encryptAttachment = () => { throw new Error('Audit: attachment encryption failed'); };
       });
       const before = uploads.length;
       try {
         await page.locator('#message').fill('encryption failure must not leak this');
         await page.locator('.send-button').click();
-        await page.waitForFunction(() => document.querySelector('#error').textContent === 'Audit: image encryption failed');
+        await page.waitForFunction(() => document.querySelector('#error').textContent === 'Audit: attachment encryption failed');
         assert.equal(uploads.length, before, 'Encryption failure must not fall back to an unencrypted upload.');
         assert.ok(!requests.some(request => request.body?.includes(Buffer.from('encryption failure must not leak this'))));
       } finally {
-        await page.evaluate(() => { SilenzaCrypto.encryptImage = window.__auditSavedEncryptImage; delete window.__auditSavedEncryptImage; });
-        await page.locator('#cancel-image').click(); await page.locator('#message').fill('');
+        await page.evaluate(() => { SilenzaCrypto.encryptAttachment = window.__auditSavedEncryptAttachment; delete window.__auditSavedEncryptAttachment; });
+        await page.locator('#cancel-attachment').click(); await page.locator('#message').fill('');
       }
     },
     async verify(original, filename) {
@@ -72,10 +76,10 @@ export async function auditImages(page) {
       for (let i = 0; i < uploads.length; i++) {
         const sample = snapshots[i], plain = Buffer.from(sample.plain, 'base64'), ciphertext = Buffer.from(sample.cipher, 'base64');
         assert.deepEqual(uploads[i].body, ciphertext, 'Upload must contain the real encryption output.');
-        assert.equal(uploads[i].body.length, plain.length + 16);
+        assert.equal(uploads[i].body.length, crypto.paddedSize(plain.length) + 16);
         assert.notDeepEqual(ciphertext, plain);
-        assert.deepEqual(Buffer.from(crypto.decryptImage(ciphertext, { ...sample, size: plain.length })), plain);
-        assert.throws(() => crypto.decryptImage(ciphertext, { ...sample, key: Buffer.alloc(32).toString('base64'), size: plain.length }), /authenticated/);
+        assert.deepEqual(Buffer.from(crypto.decryptAttachment(ciphertext, { ...sample, size: plain.length })), plain);
+        assert.throws(() => crypto.decryptAttachment(ciphertext, { ...sample, key: Buffer.alloc(32).toString('base64'), size: plain.length }), /authenticated/);
         secrets.push(plain, Buffer.from(sample.key, 'base64'), Buffer.from(sample.nonce, 'base64'));
       }
       const forbidden = [original, Buffer.from(filename), ...secrets, ...secrets.map(bytes => Buffer.from(bytes.toString('base64')))];

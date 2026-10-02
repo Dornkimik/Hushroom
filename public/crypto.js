@@ -37,26 +37,43 @@
     if (probe.every(value => value === 0)) throw new Error('Invalid encryption identity.');
     return bytes;
   }
+  const FILE_TYPES = { image: ['image/jpeg', 'image/png', 'image/gif', 'image/webp'], video: ['video/mp4', 'video/quicktime', 'video/webm'],
+    audio: ['audio/mpeg', 'audio/mp4', 'audio/webm', 'audio/wav'], file: ['application/octet-stream'] };
+  const FILE_KEYS = ['id', 'kind', 'type', 'size', 'key', 'nonce', 'width', 'height', 'name'];
+  const unsafeName = /[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069\\/]/;
+  const dimension = value => Number.isInteger(value) && value >= 1 && value <= 65535;
+  function validateFile(file) {
+    if (file === null) return;
+    if (!file || typeof file !== 'object' || Object.keys(file).some(key => !FILE_KEYS.includes(key)) || typeof file.id !== 'string' || file.id.length > 64 ||
+        !Object.hasOwn(FILE_TYPES, file.kind) || !FILE_TYPES[file.kind].includes(file.type) ||
+        !Number.isSafeInteger(file.size) || file.size < 1 || file.size > 64 * 1024 * 1024) throw new Error('Invalid private attachment.');
+    const sized = file.width != null || file.height != null;
+    if ((file.kind === 'image' && !sized) || (sized && (!['image', 'video'].includes(file.kind) || !dimension(file.width) || !dimension(file.height)))) throw new Error('Invalid private attachment.');
+    // Only generic files carry a name, and it must be safe to show and use as a download name.
+    if (file.kind === 'file' ? typeof file.name !== 'string' || !file.name.trim() || file.name.length > 120 || unsafeName.test(file.name) || ['.', '..'].includes(file.name)
+      : file.name != null) throw new Error('Invalid private attachment.');
+    unbase64(file.key, 32); unbase64(file.nonce, 24);
+  }
+  // Messages from before generic attachments carry "image": null instead of "file".
+  function fileOf(value) {
+    if (Object.hasOwn(value, 'file') && !Object.hasOwn(value, 'image')) return value.file;
+    if (!Object.hasOwn(value, 'file') && value.image === null) return null;
+    throw new Error('Invalid private message.');
+  }
   function validateContent(value) {
     if (!value || value.v !== 1 || typeof value.text !== 'string' || value.text.length > 2000 ||
         (value.replyTo !== null && typeof value.replyTo !== 'string')) throw new Error('Invalid private message.');
-    const image = value.image;
-    if (image !== null) {
-      if (!image || typeof image.id !== 'string' || image.type !== 'image/webp' ||
-          !Number.isInteger(image.width) || image.width < 1 || image.width > 2048 ||
-          !Number.isInteger(image.height) || image.height < 1 || image.height > 2048 ||
-          !Number.isInteger(image.size) || image.size < 1 || image.size > 4 * 1024 * 1024) throw new Error('Invalid private image.');
-      unbase64(image.key, 32); unbase64(image.nonce, 24);
-    }
-    if (!value.text.trim() && !image) throw new Error('Empty private message.');
+    const file = fileOf(value);
+    validateFile(file);
+    if (!value.text.trim() && !file) throw new Error('Empty private message.');
     // Optional sender clock (ms since epoch), authenticated with the message so a relay cannot silently backdate it.
     if (value.sentAt !== undefined && (!Number.isSafeInteger(value.sentAt) || value.sentAt < 1e12 || value.sentAt > 1e13)) throw new Error('Invalid private message time.');
     return value;
   }
   // sentAt: omitted → now; null → leave out (for edits of legacy messages without a sender time).
   const withTime = (value, sentAt) => sentAt === null ? value : { ...value, sentAt: sentAt === undefined ? Date.now() : sentAt };
-  function encryptMessage({ id, sender, recipient, text, replyTo = null, image = null, editVersion = 0, sentAt }, identity, peerKey) {
-    const value = validateContent(withTime({ v: 1, kind: 'private', id, sender, recipient, text, replyTo, image, editVersion }, sentAt));
+  function encryptMessage({ id, sender, recipient, text, replyTo = null, file = null, editVersion = 0, sentAt }, identity, peerKey) {
+    const value = validateContent(withTime({ v: 1, kind: 'private', id, sender, recipient, text, replyTo, file, editVersion }, sentAt));
     const nonce = nacl.randomBytes(24);
     return { v: 1, nonce: base64(nonce), ciphertext: base64(nacl.box(encode(value), nonce, publicKey(peerKey), identity.secretKey)) };
   }
@@ -69,17 +86,28 @@
     // Legacy private envelopes have no kind; group envelopes are never private messages.
     if ((value.kind !== undefined && value.kind !== 'private') || Object.hasOwn(value, 'group') || Object.hasOwn(value, 'version')) throw new Error('Private message context did not match.');
     if ((value.editVersion || 0) !== (message.editVersion || 0) || value.id !== message.id || value.sender !== message.sender || value.recipient !== message.recipient ||
-        value.replyTo !== (message.reply?.id || null) || (value.image?.id || null) !== (message.attachment?.id || null)) throw new Error('Private message metadata did not match.');
-    return { text: value.text, image: value.image, ...(value.sentAt !== undefined ? { sentAt: value.sentAt } : {}) };
+        value.replyTo !== (message.reply?.id || null) || (fileOf(value)?.id || null) !== (message.attachment?.id || null)) throw new Error('Private message metadata did not match.');
+    return { text: value.text, file: fileOf(value), ...(value.sentAt !== undefined ? { sentAt: value.sentAt } : {}) };
   }
-  function encryptImage(bytes) {
-    const key = nacl.randomBytes(32), nonce = nacl.randomBytes(24);
-    return { bytes: nacl.secretbox(bytes, nonce, key), key: base64(key), nonce: base64(nonce) };
+  // Padmé padding: an encrypted attachment's size reveals only a coarse size class
+  // (at most about 12% overhead) instead of the exact length of the file.
+  function paddedSize(length) {
+    const n = Math.max(length, 256);
+    let e = 0, s = 1;
+    while (2 ** (e + 1) <= n) e++;
+    while (2 ** s <= e) s++;
+    const step = 2 ** (e - s);
+    return Math.ceil(n / step) * step;
   }
-  function encryptGroupMessage({ id, group, version, sender, text, replyTo = null, image = null, editVersion = 0, sentAt }, identity, members) {
+  function encryptAttachment(bytes) {
+    const key = nacl.randomBytes(32), nonce = nacl.randomBytes(24), padded = new Uint8Array(paddedSize(bytes.length));
+    padded.set(bytes);
+    return { bytes: nacl.secretbox(padded, nonce, key), key: base64(key), nonce: base64(nonce) };
+  }
+  function encryptGroupMessage({ id, group, version, sender, text, replyTo = null, file = null, editVersion = 0, sentAt }, identity, members) {
     if (typeof group !== 'string' || !Number.isInteger(version) || version < 1 || !members.some(p => p.id === sender)) throw new Error('Invalid room membership.');
     // Every member receives the same sender time, so a relay cannot reorder copies differently.
-    const content = validateContent(withTime({ v: 1, text, replyTo, image, editVersion }, sentAt));
+    const content = validateContent(withTime({ v: 1, text, replyTo, file, editVersion }, sentAt));
     return Object.fromEntries(members.map(person => {
       const value = { ...content, kind: 'group', id, group, version, sender, recipient: person.id };
       const nonce = nacl.randomBytes(24);
@@ -92,14 +120,14 @@
     if (!bytes) throw new Error('This room message could not be authenticated.');
     const value = validateContent(decode(bytes));
     if ((value.editVersion || 0) !== (message.editVersion || 0) || value.kind !== 'group' || value.id !== message.id || value.group !== message.group || value.version !== message.version ||
-        value.sender !== message.sender || value.recipient !== ownId || value.replyTo !== (message.reply?.id || null) || (value.image?.id || null) !== (message.attachment?.id || null)) throw new Error('Room message metadata did not match.');
-    return { text: value.text, image: value.image, ...(value.sentAt !== undefined ? { sentAt: value.sentAt } : {}) };
+        value.sender !== message.sender || value.recipient !== ownId || value.replyTo !== (message.reply?.id || null) || (fileOf(value)?.id || null) !== (message.attachment?.id || null)) throw new Error('Room message metadata did not match.');
+    return { text: value.text, file: fileOf(value), ...(value.sentAt !== undefined ? { sentAt: value.sentAt } : {}) };
   }
-  function decryptImage(bytes, image) {
-    if (bytes.length !== image.size + 16) throw new Error('Invalid encrypted image size.');
-    const plain = nacl.secretbox.open(bytes, unbase64(image.nonce, 24), unbase64(image.key, 32));
-    if (!plain) throw new Error('This image could not be authenticated.');
-    return plain;
+  function decryptAttachment(bytes, file) {
+    if (bytes.length !== paddedSize(file.size) + 16) throw new Error('Invalid encrypted attachment size.');
+    const plain = nacl.secretbox.open(bytes, unbase64(file.nonce, 24), unbase64(file.key, 32));
+    if (!plain) throw new Error('This attachment could not be authenticated.');
+    return plain.subarray(0, file.size);
   }
   function verificationCode(a, b) {
     publicKey(a.publicKey); publicKey(b.publicKey);
@@ -281,5 +309,5 @@
       })
     };
   }
-  return { base64, unbase64, publicKey, encryptMessage, decryptMessage, encryptGroupMessage, decryptGroupMessage, encryptImage, decryptImage, verificationCode, createClient, clearLocalKeys };
+  return { base64, unbase64, publicKey, encryptMessage, decryptMessage, encryptGroupMessage, decryptGroupMessage, paddedSize, encryptAttachment, decryptAttachment, verificationCode, createClient, clearLocalKeys };
 });

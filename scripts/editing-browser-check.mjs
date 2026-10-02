@@ -59,7 +59,7 @@ try {
   await b.reload(); await b.locator('#dms .dm-room').click();
   await b.locator('#messages').getByText('Private edited sentinel', { exact: true }).waitFor();
   const image = await a.evaluate(() => { const canvas = document.createElement('canvas'); canvas.width = 10; canvas.height = 10; return canvas.toDataURL('image/png').split(',')[1]; });
-  const attach = async () => { await a.locator('#image-input').setInputFiles({ name: 'image.png', mimeType: 'image/png', buffer: Buffer.from(image, 'base64') }); await a.locator('#image-preview').waitFor({ state: 'visible' }); };
+  const attach = async () => { await a.locator('#file-input').setInputFiles({ name: 'image.png', mimeType: 'image/png', buffer: Buffer.from(image, 'base64') }); await a.locator('#attachment-preview').waitFor({ state: 'visible' }); };
   await attach(); await send(a, 'Private caption'); await editMessage(a, 'Private caption', 'Private caption edited');
   await b.locator('#messages').getByText('Private caption edited', { exact: true }).waitFor();
   await b.waitForFunction(() => [...document.querySelectorAll('.private-image')].some(i => i.complete && i.naturalWidth === 10));

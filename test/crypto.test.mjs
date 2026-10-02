@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import nacl from 'tweetnacl';
 import crypto from '../public/crypto.js';
-import { Attachments, MAX_IMAGE_BYTES } from '../lib/attachments.mjs';
+import { Attachments, MAX_ATTACHMENT_BYTES } from '../lib/attachments.mjs';
 import { Readable, PassThrough } from 'node:stream';
 
 const key = person => crypto.base64(person.publicKey);
@@ -23,14 +23,14 @@ test('private messages authenticate both directions and reject tampering and met
   assert.throws(() => crypto.publicKey(crypto.base64(new Uint8Array(32))), /identity/);
 });
 
-test('image keys are independent, and integrity failures never return plaintext', () => {
-  const bytes = new TextEncoder().encode('image pixels');
-  const first = crypto.encryptImage(bytes), second = crypto.encryptImage(bytes);
+test('attachment keys are independent, and integrity failures never return plaintext', () => {
+  const bytes = new TextEncoder().encode('attachment bytes');
+  const first = crypto.encryptAttachment(bytes), second = crypto.encryptAttachment(bytes);
   assert.notEqual(first.key, second.key); assert.notEqual(first.nonce, second.nonce);
-  assert.deepEqual(crypto.decryptImage(first.bytes, { ...first, size: bytes.length }), bytes);
-  assert.throws(() => crypto.decryptImage(first.bytes, { ...second, size: bytes.length }), /authenticated/);
+  assert.deepEqual(crypto.decryptAttachment(first.bytes, { ...first, size: bytes.length }), bytes);
+  assert.throws(() => crypto.decryptAttachment(first.bytes, { ...second, size: bytes.length }), /authenticated/);
   first.bytes[0] ^= 1;
-  assert.throws(() => crypto.decryptImage(first.bytes, { ...first, size: bytes.length }), /authenticated/);
+  assert.throws(() => crypto.decryptAttachment(first.bytes, { ...first, size: bytes.length }), /authenticated/);
 });
 
 test('valid group ciphertext cannot be relabelled as a private message', () => {
@@ -57,7 +57,7 @@ test('verification codes are symmetric and bind session IDs and keys', () => {
 
 test('attachment expiry, abandoned uploads, ownership and quotas', async () => {
   let time = 1000;
-  const store = new Attachments({ now: () => time, ttl: 3600000, maxBytes: MAX_IMAGE_BYTES * 2, perUser: MAX_IMAGE_BYTES });
+  const store = new Attachments({ now: () => time, ttl: 3600000, maxBytes: MAX_ATTACHMENT_BYTES * 2, perUser: MAX_ATTACHMENT_BYTES });
   const body = () => Readable.from([Buffer.alloc(64, 1)]);
   const first = await store.upload(body(), 'a', 'b');
   assert.throws(() => store.get(first.id, 'b'), /unavailable/);
@@ -70,7 +70,7 @@ test('attachment expiry, abandoned uploads, ownership and quotas', async () => {
   assert.throws(() => store.get(first.id, 'a'), /unavailable/);
   const abandoned = await store.upload(body(), 'a', 'b'); time += 600000;
   assert.throws(() => store.get(abandoned.id, 'a'), /unavailable/);
-  await assert.rejects(store.upload(Readable.from([Buffer.alloc(MAX_IMAGE_BYTES + 1)]), 'a', 'b'), /4 MB/);
+  await assert.rejects(store.upload(Readable.from([Buffer.alloc(MAX_ATTACHMENT_BYTES + 1)]), 'a', 'b'), /16 MB/);
   assert.equal(store.reservations.size, 0);
   const removed = await store.upload(body(), 'a', 'b'); store.removeUser('b');
   assert.throws(() => store.get(removed.id, 'a'), /unavailable/);
@@ -78,7 +78,7 @@ test('attachment expiry, abandoned uploads, ownership and quotas', async () => {
 
 
 test('simultaneous uploads reserve capacity before reading their bytes', async () => {
-  const store = new Attachments({ maxBytes: MAX_IMAGE_BYTES, perUser: MAX_IMAGE_BYTES });
+  const store = new Attachments({ maxBytes: MAX_ATTACHMENT_BYTES, perUser: MAX_ATTACHMENT_BYTES });
   const pending = new PassThrough();
   const uploading = store.upload(pending, 'a', 'b');
   await assert.rejects(store.upload(Readable.from([Buffer.alloc(64)]), 'c', 'd'), /full/);
