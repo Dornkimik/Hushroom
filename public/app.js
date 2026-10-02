@@ -337,7 +337,7 @@ function updateComposerState(problem) {
   $('#attach-file').hidden = !privateChat && !groupChat; $('#attach-file').disabled = !(groupChat ? groupReady : ready) || sending || filePreparing;
   $('#verify-identity').disabled = !ready;
   $('#verify-identity').hidden = groupChat;
-  if (groupChat) $('#encryption-status').textContent = problem || groupBlock || (groupReady ? `End-to-end encrypted${groupState.shareHistory ? ' · New members can read messages sent now' : ''} · Verify members in Room details` : encryptionError || 'Preparing room encryption…');
+  if (groupChat) $('#encryption-status').textContent = problem || groupBlock || (groupReady ? `End-to-end encrypted${groupState.shareHistory ? ' · New members can see previous messages' : ''} · Verify members in Room details` : encryptionError || 'Preparing room encryption…');
   if (privateChat) $('#encryption-status').textContent = problem || (ready ? `End-to-end encrypted · ${peerIdentity.verified ? 'Identity verified' : 'Identity not verified'}` : encryptionError || 'Waiting for private encryption…');
 }
 async function decodePrivate(message) {

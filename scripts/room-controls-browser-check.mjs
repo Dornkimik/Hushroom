@@ -103,7 +103,7 @@ try {
   // History sharing: later members read messages sent while it is on, and nothing from before.
   await a.locator('#group-read-only').uncheck(); await a.locator('#group-locked').uncheck(); await a.locator('#group-share-history').check(); await a.locator('#group-save').click();
   await a.locator('#group-dialog .close-dialog').click();
-  await a.locator('#encryption-status').filter({ hasText: 'New members can read messages sent now' }).waitFor();
+  await a.locator('#encryption-status').filter({ hasText: 'New members can see previous messages' }).waitFor();
   assert.match(await a.locator('#conversation-type').textContent(), /History shared with new members/);
   await d.locator('#command-status').filter({ hasText: 'History sharing is on' }).waitFor();
   await send(a, 'shared history sentinel');
