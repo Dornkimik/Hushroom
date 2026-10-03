@@ -12,6 +12,7 @@ import { Blocks, userKey } from './lib/blocks.mjs';
 import { Announcements, announcementRoom } from './lib/announcements.mjs';
 import { Security, sessionCapacity, validateOrigin, trustedProxyList } from './lib/security.mjs';
 import { Histories } from './lib/histories.mjs';
+import { randomAlias } from './lib/aliases.mjs';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const configuredOrigin = validateOrigin(process.env.ORIGIN, process.env.NODE_ENV === 'production' || Boolean(process.env.RAILWAY_ENVIRONMENT_ID));
@@ -73,8 +74,9 @@ if (process.env.ADMIN_USERNAME && process.env.ADMIN_PASSWORD && !accounts.items.
 }
 const isAdmin = s => accounts.get(s.accountId)?.role === 'admin';
 const hash = value => createHash('sha256').update(value).digest();
-const adjectives = ['Velvet', 'Quiet', 'Cosmic', 'Silver', 'Mellow', 'Amber', 'Lunar'];
-const animals = ['Fox', 'Otter', 'Owl', 'Panda', 'Moth', 'Lynx', 'Finch'];
+// Guest aliases must not match anyone online or any registered username.
+const aliasTaken = alias => { const lower = alias.toLowerCase();
+  return [...sessions.values()].some(s => s.alias.toLowerCase() === lower) || accounts.items.some(a => a.username.toLowerCase() === lower); };
 const online = s => s.streams.size > 0;
 const displaysAsAdmin = s => s.displayAsAdmin === true && isAdmin(s);
 const safeUser = s => ({ id: s.id, alias: s.alias, online: online(s), displayAsAdmin: displaysAsAdmin(s) });
@@ -290,7 +292,7 @@ const server = http.createServer(async (req, res) => {
         if (security.clientBanned(clientKey)) fail(403, 'New guest sessions cannot be started from this network right now.');
         security.guest(clientKey); sessionCapacity(sessions, undefined, undefined, clientKey);
         const secret = randomBytes(32).toString('hex');
-        session = { id: randomUUID(), alias: `${adjectives[Math.floor(Math.random()*adjectives.length)]} ${animals[Math.floor(Math.random()*animals.length)]} ${randomBytes(2).toString('hex')}`, streams: new Set(), room: rooms[0]?.id, seen: Date.now(), sent: [], clientKey };
+        session = { id: randomUUID(), alias: randomAlias(aliasTaken), streams: new Set(), room: rooms[0]?.id, seen: Date.now(), sent: [], clientKey };
         sessions.set(secret, session);
         cookie(secret);
       }

@@ -23,7 +23,9 @@ function username(alias, className, displayAsAdmin) {
   if (displayAsAdmin) name.append(element('small', 'admin-badge', 'ADMIN'));
   return name;
 }
-function avatar(alias, own = false) { return element('span', `avatar${own ? ' me-avatar' : ''}`, alias.split(' ').slice(0,2).map(s => s[0]).join('')); }
+// One-word aliases like "Mistfinch" show their first two letters.
+function initials(alias) { const words = alias.split(' ').filter(Boolean); return words.length > 1 ? words.slice(0,2).map(s => s[0]).join('') : alias.slice(0,2); }
+function avatar(alias, own = false) { return element('span', `avatar${own ? ' me-avatar' : ''}`, initials(alias)); }
 function renderRooms() {
   $('#room-count').textContent = rooms.filter(room => !room.adminOnly).length;
   const roomButton = room => {
