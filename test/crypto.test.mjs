@@ -23,6 +23,18 @@ test('private messages authenticate both directions and reject tampering and met
   assert.throws(() => crypto.publicKey(crypto.base64(new Uint8Array(32))), /identity/);
 });
 
+test('message ciphertexts are padded to 512-byte classes and padded messages still decrypt', () => {
+  const a = nacl.box.keyPair(), b = nacl.box.keyPair();
+  const size = text => crypto.unbase64(crypto.encryptMessage({ id: 'm', sender: 'a', recipient: 'b', text }, a, key(b)).ciphertext).length;
+  assert.equal(size('hi'), size('a considerably longer private message that still fits in one block'));
+  assert.equal((size('hi') - 16) % 512, 0);
+  assert.ok(size('x'.repeat(1200)) > size('hi'));
+  // Worst-case content (escaped control characters) stays within the server's ciphertext limit.
+  assert.ok(size('\u0001'.repeat(2000)) <= 18000);
+  const encrypted = crypto.encryptMessage({ id: 'm', sender: 'a', recipient: 'b', text: 'padded 👋' }, a, key(b));
+  assert.equal(crypto.decryptMessage({ id: 'm', sender: 'a', recipient: 'b', room: null, encrypted, reply: null, attachment: null }, 'b', b, key(a)).text, 'padded 👋');
+});
+
 test('attachment keys are independent, and integrity failures never return plaintext', () => {
   const bytes = new TextEncoder().encode('attachment bytes');
   const first = crypto.encryptAttachment(bytes), second = crypto.encryptAttachment(bytes);

@@ -217,7 +217,7 @@ async function loadSharedHistory(group) {
 const renderedRows = new Map();
 let stickToBottom = false;
 function renderMessages() {
-  const scroll = $('#chat-scroll'), atBottom = stickToBottom || scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 80;
+  const scroll = $('#chat-scroll'), list = $('#messages'), atBottom = stickToBottom || scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 80;
   stickToBottom = false;
   const rows = messages.map(message => {
     const persistent = Boolean(rooms.find(r => r.id === message.room)?.persistent), adminOnly = Boolean(rooms.find(r => r.id === message.room)?.adminOnly);
@@ -226,14 +226,23 @@ function renderMessages() {
     const cached = renderedRows.get(message.id);
     if (cached?.message === message && cached.key === key && cached.original === original) return cached.row;
     const row = renderMessage(message);
+    // Only a message appearing for the first time in a conversation that is already shown animates in;
+    // redrawn rows (decrypted, edited) and freshly loaded history appear without replaying the animation.
+    if (cached || !list.children.length) row.classList.add('settled');
     renderedRows.set(message.id, { message, key, original, row });
     return row;
   });
   const shown = new Set(messages.map(m => m.id));
   for (const id of renderedRows.keys()) if (!shown.has(id)) renderedRows.delete(id);
-  const list = $('#messages');
-  // Only touch the DOM when the order or a row changed.
-  if (rows.length !== list.children.length || rows.some((row, index) => list.children[index] !== row)) list.replaceChildren(...rows);
+  // Patch the list in place: rows that stay keep their DOM node (no relayout, no replayed animation,
+  // media keeps playing), and only new, changed or removed rows are inserted or detached.
+  const wanted = new Set(rows);
+  for (const child of [...list.children]) if (!wanted.has(child)) child.remove();
+  let next = list.firstElementChild;
+  for (const row of rows) {
+    if (row === next) next = next.nextElementSibling;
+    else list.insertBefore(row, next);
+  }
   $('#empty-chat').hidden = messages.length > 0 || !current;
   $('#empty-chat').textContent = current?.group ? 'No messages yet. Start the conversation below.' : 'It’s quiet in here. Be the first to say hello.';
   $('#welcome').hidden = Boolean(current?.group) || messages.length > 3;
@@ -759,7 +768,7 @@ function setAdmin(admin) {
   else { adminStateRequest++; adminGroups = []; renderAdminGroups(); $('#moderate-group-dialog').close(); feedbackRequest++; $('#admin-feedback').replaceChildren(); $('#feedback-count').textContent = ''; $('#feedback-inbox-status').textContent = ''; }
 }
 function updateAppearance(person) {
-  people = people.map(p => p.id === person.id ? { ...p, ...person } : p);
+  people = people.map(p => p.id === person.id ? { ...p, ...person } : p); lastPeopleData = '';
   renderPeople(); renderDMs();
 }
 function updateSession(session) { Object.assign(me, session); updateComposerState(); $('#identity-kind').textContent = me.account ? 'Persistent account' : 'Guest identity'; $('#account-security').hidden = !me.account; setAdmin(me.admin); updateAppearance(me); renderMessages(); }
@@ -777,7 +786,7 @@ async function refreshAdminState() {
     const state = await api('admin/state');
     if (!me?.admin || request !== adminStateRequest) return;
     adminGroups = state.groups || []; renderAdminGroups();
-    people = state.people; adminBans = state.bans;
+    people = state.people; lastPeopleData = ''; adminBans = state.bans;
     renderPeople(); renderAdminPeople(); renderAdminBans(); renderMessages();
   } catch(e) { $('#admin-error').textContent = e.message; }
 }
@@ -815,7 +824,7 @@ $('#confirm-ban').onclick = async () => { $('#confirm-ban').disabled = true; try
 // 15 seconds and the page reconnects itself when nothing arrives for 45 seconds. Every (re)connect
 // catches up on what was missed instead of reloading the conversation.
 const seenPeople = new Set();
-let lastEvent = 0, reconnectTimer = 0, reconnectDelay = 2000, groupsChangedTimer = 0;
+let lastEvent = 0, lastPeopleData = '', lastRoomsData = '', reconnectTimer = 0, reconnectDelay = 2000, groupsChangedTimer = 0;
 function connect() {
   clearTimeout(reconnectTimer); stream?.close();
   if (signingOut || !me) return;
@@ -844,7 +853,9 @@ function connect() {
   });
   stream.addEventListener('appearance', event => updateAppearance(JSON.parse(event.data)));
   stream.addEventListener('people', event => {
-    people = JSON.parse(event.data);
+    // Presence fan-outs often repeat an unchanged list; skip rebuilding the sidebar then.
+    if (event.data === lastPeopleData) return;
+    lastPeopleData = event.data; people = JSON.parse(event.data);
     // A new session of someone you blocked must be hidden too, and only the server knows whose it is.
     // Ask only when you have blocked someone and a session appears that this page has not seen yet.
     const fresh = people.some(person => !seenPeople.has(person.id));
@@ -852,7 +863,7 @@ function connect() {
     if (fresh && blockedUsers.length) api('private/preferences').then(applyPrivatePreferences).catch(() => {});
     renderPeople(); renderDMs(); renderAdminPeople();
   });
-  stream.addEventListener('rooms', event => { rooms = JSON.parse(event.data); if (current?.room && !rooms.some(r => r.id === current.room)) { select(rooms[0] ? { room: rooms[0].id } : null); error('That room was removed by the host.'); } else if (!current && rooms[0]) select({ room: rooms[0].id }); else { renderRooms(); updateHeading(); } });
+  stream.addEventListener('rooms', event => { if (event.data === lastRoomsData && current) return; lastRoomsData = event.data; rooms = JSON.parse(event.data); if (current?.room && !rooms.some(r => r.id === current.room)) { select(rooms[0] ? { room: rooms[0].id } : null); error('That room was removed by the host.'); } else if (!current && rooms[0]) select({ room: rooms[0].id }); else { renderRooms(); updateHeading(); } });
   stream.addEventListener('message', event => receive(JSON.parse(event.data)));
   stream.addEventListener('message-edited', event => applyEdit(JSON.parse(event.data)));
   stream.addEventListener('message-removed', event => applyRemoval(JSON.parse(event.data)));

@@ -18,6 +18,15 @@
     return cleanupChannel;
   }
   const encode = value => new TextEncoder().encode(JSON.stringify(value));
+  // Message plaintexts are padded with trailing JSON whitespace to a multiple of 512 bytes, so a
+  // ciphertext reveals only a coarse length class instead of the exact message length. Older
+  // clients still decode padded messages, since JSON.parse ignores trailing whitespace.
+  const MESSAGE_BLOCK = 512, MAX_SEALED = 18000 - 16;
+  function sealed(value) {
+    const bytes = encode(value), size = Math.max(bytes.length, Math.min(Math.ceil(bytes.length / MESSAGE_BLOCK) * MESSAGE_BLOCK, MAX_SEALED));
+    if (size === bytes.length) return bytes;
+    const padded = new Uint8Array(size).fill(0x20); padded.set(bytes); return padded;
+  }
   const decode = bytes => JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
   function base64(bytes) {
     let text = '';
@@ -75,7 +84,7 @@
   function encryptMessage({ id, sender, recipient, text, replyTo = null, file = null, editVersion = 0, sentAt }, identity, peerKey) {
     const value = validateContent(withTime({ v: 1, kind: 'private', id, sender, recipient, text, replyTo, file, editVersion }, sentAt));
     const nonce = nacl.randomBytes(24);
-    return { v: 1, nonce: base64(nonce), ciphertext: base64(nacl.box(encode(value), nonce, publicKey(peerKey), identity.secretKey)) };
+    return { v: 1, nonce: base64(nonce), ciphertext: base64(nacl.box(sealed(value), nonce, publicKey(peerKey), identity.secretKey)) };
   }
   function decryptMessage(message, ownId, identity, peerKey) {
     if (message.room || message.group || !message.encrypted || message.encrypted.v !== 1 ||
@@ -126,7 +135,7 @@
     return Object.fromEntries(members.map(person => {
       const value = { ...content, ...history, kind: 'group', id, group, version, sender, recipient: person.id };
       const nonce = nacl.randomBytes(24);
-      return [person.id, { v: 1, nonce: base64(nonce), ciphertext: base64(nacl.box(encode(value), nonce, publicKey(person.publicKey), identity.secretKey)) }];
+      return [person.id, { v: 1, nonce: base64(nonce), ciphertext: base64(nacl.box(sealed(value), nonce, publicKey(person.publicKey), identity.secretKey)) }];
     }));
   }
   function contentOf(value) { return { text: value.text, file: fileOf(value), ...(value.sentAt !== undefined ? { sentAt: value.sentAt } : {}) }; }
@@ -147,7 +156,7 @@
     const value = { ...validateContent({ v: 1, text: content.text, replyTo: message.reply?.id || null, file: content.file, editVersion: message.editVersion || 0, ...(content.sentAt !== undefined ? { sentAt: content.sentAt } : {}) }),
       kind: 'group-share', id: message.id, group: message.group, sender: message.sender, sharer, recipient: recipient.id, history: signature };
     const nonce = nacl.randomBytes(24);
-    return { v: 1, nonce: base64(nonce), ciphertext: base64(nacl.box(encode(value), nonce, publicKey(recipient.publicKey), identity.secretKey)) };
+    return { v: 1, nonce: base64(nonce), ciphertext: base64(nacl.box(sealed(value), nonce, publicKey(recipient.publicKey), identity.secretKey)) };
   }
   // The sharer's box only provides confidentiality; authorship comes from the author's signature.
   function decryptGroupShare(message, ownId, identity, sharerKey, senderSignKey) {

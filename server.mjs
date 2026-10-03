@@ -50,8 +50,16 @@ const attachmentMax = Number(process.env.ATTACHMENT_MAX_MB || 16) * 1024 * 1024;
 if (!Number.isSafeInteger(attachmentMax) || attachmentMax < 1024 * 1024 || attachmentMax > 64 * 1024 * 1024) throw new Error('ATTACHMENT_MAX_MB must be a whole number between 1 and 64.');
 if (attachmentStorage < attachmentMax) throw new Error('ATTACHMENT_STORAGE_MB must be at least ATTACHMENT_MAX_MB.');
 const attachments = new Attachments({ ttl: attachmentTTL, maxBytes: attachmentStorage, maxItem: attachmentMax });
-const sessions = new Map();
-const sessionById = id => { for (const s of sessions.values()) if (s.id === id) return s; };
+// Sessions are keyed by their secret cookie token and also indexed by public ID, so looking up
+// a peer costs O(1) instead of scanning every session on each request.
+class SessionMap extends Map {
+  ids = new Map();
+  set(token, session) { const previous = super.get(token); if (previous && previous !== session && this.ids.get(previous.id) === previous) this.ids.delete(previous.id); this.ids.set(session.id, session); return super.set(token, session); }
+  delete(token) { const session = super.get(token); if (session && this.ids.get(session.id) === session) this.ids.delete(session.id); return super.delete(token); }
+  clear() { this.ids.clear(); super.clear(); }
+}
+const sessions = new SessionMap();
+const sessionById = id => sessions.ids.get(id);
 const histories = new Histories({ attachments, clientOf: id => sessionById(id)?.clientKey });
 const streamClients = new Map();
 const security = new Security({ trustedProxies: trustedProxyList(process.env.TRUSTED_PROXY_ADDRESSES || '', process.env.TRUSTED_PROXY_PRESET || ''),
@@ -80,11 +88,14 @@ const aliasTaken = alias => { const lower = alias.toLowerCase();
 const online = s => s.streams.size > 0;
 const displaysAsAdmin = s => s.displayAsAdmin === true && isAdmin(s);
 const safeUser = s => ({ id: s.id, alias: s.alias, online: online(s), displayAsAdmin: displaysAsAdmin(s) });
-const emit = (s, event, data) => { for (const stream of s.streams) {
+const frame = (event, data) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+const write = (s, text) => { for (const stream of s.streams) {
   if (stream.writableLength > 256000) { stream.destroy(); continue; }
-  stream.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  stream.write(text);
 } };
-const broadcast = (event, data) => { for (const s of sessions.values()) emit(s, event, data); };
+const emit = (s, event, data) => { if (s.streams.size) write(s, frame(event, data)); };
+// A broadcast is serialized once, not once per connected stream.
+const broadcast = (event, data) => { const text = frame(event, data); for (const s of sessions.values()) if (s.streams.size) write(s, text); };
 const presenceKey = s => s.accountId || s.id;
 function onlinePeople(viewer) {
   const people = new Map();
@@ -111,7 +122,12 @@ function throttled(run) {
   };
 }
 const presence = throttled(() => { for (const session of sessions.values()) if (online(session)) emit(session, 'people', onlinePeople(session)); });
-const roomList = () => allRooms().map(r => ({ ...r, preview: (r.persistent ? announcements.messages : histories.get(`room:${r.id}`) || []).at(-1)?.text?.slice(0, 100) || '', count: new Set([...sessions.values()].filter(s => online(s) && s.room === r.id).map(presenceKey)).size }));
+function roomList() {
+  // One pass over sessions for every room's head count, instead of one pass per room.
+  const present = new Map();
+  for (const s of sessions.values()) if (online(s)) { if (!present.has(s.room)) present.set(s.room, new Set()); present.get(s.room).add(presenceKey(s)); }
+  return allRooms().map(r => ({ ...r, preview: (r.persistent ? announcements.messages : histories.get(`room:${r.id}`) || []).at(-1)?.text?.slice(0, 100) || '', count: present.get(r.id)?.size || 0 }));
+}
 const publishRooms = throttled(() => broadcast('rooms', roomList()));
 const privatePreferences = s => ({
   blocks: blocks.list(s).map(item => ({ ...item, peers: [...sessions.values()].filter(peer => userKey(peer) === item.key).map(peer => peer.id) })),
@@ -132,7 +148,7 @@ function dropPrivateHistories(user, peer) {
 }
 const publicSession = s => ({ ...safeUser(s), admin: isAdmin(s), account: Boolean(s.accountId) });
 const publishAppearance = s => { emit(s, 'session', publicSession(s)); broadcast('appearance', safeUser(s)); presence(); };
-const groups = new Groups({ isAdmin, emit, broadcast, safeUser, attachments, findUser: id => [...sessions.values()].find(s => s.id === id) });
+const groups = new Groups({ isAdmin, emit, broadcast, safeUser, attachments, findUser: id => sessionById(id) });
 const keyFor = (s, room, peer) => peer ? `dm:${[s.id, peer].sort().join(':')}` : `room:${room}`;
 function removeSession(token, session) {
   sessions.delete(token); histories.removeUser(session.id);
@@ -196,9 +212,11 @@ function contentLength(req) {
   return Number(value);
 }
 async function body(req, maximum = 32768) {
-  let text = '';
-  for await (const chunk of req) { text += chunk; if (Buffer.byteLength(text) > maximum) fail(413, 'That request is too large.'); }
-  try { const parsed = JSON.parse(text); if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) fail(400, 'Invalid request.'); return parsed; } catch { fail(400, 'Invalid request.'); }
+  // Collect raw bytes and decode once: decoding chunk by chunk corrupts a multi-byte character
+  // split across chunks, and re-measuring the growing string made large bodies quadratic.
+  const chunks = []; let size = 0;
+  for await (const chunk of req) { size += chunk.length; if (size > maximum) fail(413, 'That request is too large.'); chunks.push(chunk); }
+  try { const parsed = JSON.parse(Buffer.concat(chunks, size).toString('utf8')); if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) fail(400, 'Invalid request.'); return parsed; } catch { fail(400, 'Invalid request.'); }
 }
 // Static files are read, hashed and compressed once per change, so slow connections download them
 // compressed and only when they changed. The modification time is checked so frontend edits still apply on refresh.
@@ -312,7 +330,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === '/api/private/preferences' && req.method === 'GET') { json(privatePreferences(session)); return; }
     if (url.pathname === '/api/identity' && req.method === 'GET') {
-      const peer = [...sessions.values()].find(s => s.id === url.searchParams.get('peer'));
+      const peer = sessionById(url.searchParams.get('peer'));
       if (peer) ensurePrivateAllowed(session, peer);
       if (!peer?.publicKey) fail(409, 'This person has not enabled private encryption yet. They need to open or refresh SilenzaChat.');
       json({ id: peer.id, publicKey: peer.publicKey, ...(peer.signKey ? { signKey: peer.signKey } : {}) }); return;
@@ -329,14 +347,14 @@ const server = http.createServer(async (req, res) => {
         }
         json(uploaded); return;
       }
-      const peer = [...sessions.values()].find(s => s.id === url.searchParams.get('peer'));
+      const peer = sessionById(url.searchParams.get('peer'));
       if (!peer || peer.id === session.id) fail(404, 'That person is no longer available.');
       ensurePrivateAllowed(session, peer);
       if (!session.publicKey || !peer.publicKey) fail(409, 'Both people need encryption identities before uploading.');
       if (req.headers['content-type'] !== 'application/octet-stream') fail(415, 'Upload encrypted attachment bytes only.');
       const uploaded = await attachments.upload(req, session.id, peer.id, {}, session.clientKey, contentLength(req));
       // A ban or session expiry may have happened while reading the upload.
-      if (sessions.get(token) !== session || ![...sessions.values()].includes(peer)) { attachments.remove(uploaded.id); fail(403, 'This private session is no longer available.'); }
+      if (sessions.get(token) !== session || sessionById(peer.id) !== peer) { attachments.remove(uploaded.id); fail(403, 'This private session is no longer available.'); }
       if (blocks.between(session, peer)) { attachments.remove(uploaded.id); ensurePrivateAllowed(session, peer); }
       json(uploaded); return;
     }
@@ -365,7 +383,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === '/api/history' && req.method === 'GET') {
       const peer = url.searchParams.get('peer'), room = url.searchParams.get('room');
-      if (peer ? ![...sessions.values()].some(s => s.id === peer) : !allRooms().some(r => r.id === room)) fail(404, 'Conversation is no longer available.');
+      if (peer ? !sessionById(peer) : !allRooms().some(r => r.id === room)) fail(404, 'Conversation is no longer available.');
       json(!peer && room === announcementRoom.id ? announcements.messages : histories.get(keyFor(session, room, peer)) || []); return;
     }
     if (url.pathname === '/api/admin/feedback' && req.method === 'GET') {
@@ -408,7 +426,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === '/api/private/block') {
       if (typeof input.blocked !== 'boolean') fail(400, 'Choose block or unblock.');
-      const peer = [...sessions.values()].find(person => person.id === input.peer);
+      const peer = sessionById(input.peer);
       const existing = blocks.list(session).find(item => item.key === input.key);
       if (input.blocked && (!peer || userKey(peer) === userKey(session))) fail(400, 'Choose another user to block.');
       if (!input.blocked && !existing) fail(404, 'Blocked user not found.');
@@ -419,7 +437,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === '/api/private/hide' || url.pathname === '/api/private/show') {
       if (typeof input.peer !== 'string' || !/^[0-9a-f-]{36}$/.test(input.peer) || input.peer === session.id) fail(400, 'Choose a private conversation.');
-      if (url.pathname.endsWith('/show') && ![...sessions.values()].some(person => person.id === input.peer)) fail(404, 'Conversation is no longer available.');
+      if (url.pathname.endsWith('/show') && !sessionById(input.peer)) fail(404, 'Conversation is no longer available.');
       session.hiddenChats ||= new Set();
       if (url.pathname.endsWith('/hide') && session.hiddenChats.size >= 5000 && !session.hiddenChats.has(input.peer)) fail(400, 'Too many hidden conversations.');
       if (url.pathname.endsWith('/hide')) session.hiddenChats.add(input.peer);
@@ -514,7 +532,7 @@ const server = http.createServer(async (req, res) => {
       session.sent = session.sent.filter(t => Date.now() - t < 10000);
       if (session.sent.length >= 8) fail(429, 'Take a breath. Try again in a few seconds.');
       if (message.encrypted) {
-        const peer = [...sessions.values()].find(person => person.id === message.recipient);
+        const peer = sessionById(message.recipient);
         if (!peer) fail(404, 'That person is no longer available.');
         ensurePrivateAllowed(session, peer);
         if (Object.keys(input).some(k => !['id', 'editVersion', 'encrypted'].includes(k))) fail(400, 'Private edits must contain ciphertext only.');
@@ -541,7 +559,7 @@ const server = http.createServer(async (req, res) => {
       session.sent = session.sent.filter(t => Date.now() - t < 10000);
       if (session.sent.length >= 8) fail(429, 'Take a breath. Try again in a few seconds.');
       if (input.peer) {
-        const peer = [...sessions.values()].find(s => s.id === input.peer);
+        const peer = sessionById(input.peer);
         if (!peer || peer.id === session.id) fail(404, 'That person is no longer available.');
         ensurePrivateAllowed(session, peer);
         if (!session.publicKey || !peer.publicKey) fail(409, 'Private encryption is not ready.');
@@ -572,7 +590,7 @@ const server = http.createServer(async (req, res) => {
       if (input.encrypted || input.attachmentId) fail(400, 'Encrypted attachments belong in private conversations.');
       const text = typeof input.text === 'string' ? input.text.trim() : '';
       if (!text || text.length > 2000) fail(400, 'Use between 1 and 2,000 characters.');
-      const peer = input.peer && [...sessions.values()].find(s => s.id === input.peer);
+      const peer = input.peer && sessionById(input.peer);
       if (input.peer && (!peer || peer.id === session.id)) fail(404, 'That person is no longer available.');
       if (!input.peer && !allRooms().some(r => r.id === input.room)) fail(404, 'Room no longer exists.');
       const key = keyFor(session, input.room, peer?.id);
@@ -659,6 +677,9 @@ const server = http.createServer(async (req, res) => {
       histories.sweep(new Set([...sessions.values()].map(s => s.id)));
       let found, conversation;
       for (const [key, history] of histories) {
+        // Admins moderate public rooms only. Private message IDs are chosen by clients, so a private
+        // message reusing a public message's ID must never shadow it and defeat an admin removal.
+        if (adminRemoval && !key.startsWith('room:')) continue;
         const message = history.find(m => m.id === input.id && (adminRemoval || m.sender === session.id));
         if (message) { found = message; conversation = key; break; }
       }

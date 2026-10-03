@@ -5,6 +5,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import net from 'node:net';
+import http from 'node:http';
 import { once } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import nacl from 'tweetnacl';
@@ -168,6 +169,27 @@ test('anonymous public chat, private isolation, admin control and persistence', 
     assert.equal((await request(a, 'auth/login', { username: 'host', password: 'integration-test-password' })).status, 200);
     // Changing from guest to account already removed the old private history.
     assert.equal((await request(a, 'admin/remove-message', { id: literal.data.id })).status, 404);
+    // A private message that reuses a public message's ID (from a conversation stored earlier) must not
+    // shadow it: admin removal targets the public message and never touches the private one.
+    const earlier = await request(c, 'message', privatePayload(c, b, 'opens the conversation first')); assert.equal(earlier.status, 200);
+    const shadowRoom = (await request(a, 'admin/create', { name: 'Shadow test', description: '' })).data.id;
+    const target = await request(b, 'message', { room: shadowRoom, text: 'Abusive public message' }); assert.equal(target.status, 200);
+    const decoy = privatePayload(c, b, 'decoy'); decoy.id = target.data.id;
+    decoy.encrypted = encryption.encryptMessage({ id: decoy.id, sender: c.me.id, recipient: b.me.id, text: 'decoy' }, c.identity, encryption.base64(b.identity.publicKey));
+    assert.equal((await request(c, 'message', decoy)).status, 200);
+    const removal = await request(a, 'admin/remove-message', { id: target.data.id });
+    assert.equal(removal.status, 200); assert.equal(removal.data.room, shadowRoom);
+    assert.ok(!(await request(b, `history?room=${shadowRoom}`)).data.some(m => m.id === target.data.id));
+    assert.ok((await request(b, `history?peer=${c.me.id}`)).data.some(m => m.id === target.data.id));
+    // A multi-byte character split across request body chunks must arrive intact.
+    const split = await new Promise((resolve, reject) => {
+      const bytes = Buffer.from(JSON.stringify({ room: shadowRoom, text: 'split 👋 emoji' })), cut = bytes.indexOf(0xf0) + 2;
+      const req = http.request(`${origin}/api/message`, { method: 'POST', headers: { Cookie: b.cookie, Origin: origin, 'Content-Type': 'application/json', 'Content-Length': bytes.length } }, res => {
+        let text = ''; res.setEncoding('utf8'); res.on('data', chunk => text += chunk); res.on('end', () => resolve(JSON.parse(text)));
+      });
+      req.on('error', reject); req.write(bytes.subarray(0, cut)); setTimeout(() => req.end(bytes.subarray(cut)), 50);
+    });
+    assert.equal(split.text, 'split 👋 emoji');
     assert.equal((await fetch(imageURL, { headers: { Cookie: b.cookie } })).status, 404);
     await new Promise(resolve => setTimeout(resolve, 50)); assert.ok(!ce.removals.includes(sentImage.data.id));
     assert.equal((await request(a, 'admin/ban', { id: c.me.id })).status, 200);

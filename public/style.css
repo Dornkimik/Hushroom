@@ -185,7 +185,7 @@ dialog input { width: 100%; padding: 12px; border: 1px solid var(--line); border
 }
 @media (prefers-reduced-motion: no-preference) {
   button, a { transition: background .15s, color .15s; }
-  .chat-message { animation: arrive .2s ease-out; }
+  .chat-message:not(.settled) { animation: arrive .2s ease-out; }
   @keyframes arrive { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
 }
 
