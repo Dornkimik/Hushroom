@@ -706,7 +706,60 @@ $('#message').onkeydown = event => {
 $('#message').oninput = () => { resizeComposer(); updateSuggestions(); };
 $('#message').onclick = updateSuggestions;
 $('#message').onkeyup = event => { if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) updateSuggestions(); };
-const emojis = [['😀','grinning happy'],['😄','smile happy'],['😂','laugh tears joy'],['🥹','touched tears'],['😊','smile blush'],['😍','love heart eyes'],['😎','cool sunglasses'],['🤔','thinking'],['😢','sad cry'],['😭','cry sob'],['😴','sleep tired'],['🙃','upside down'],['🥳','party celebration'],['😅','sweat smile'],['❤️','red heart love'],['💚','green heart'],['💔','broken heart'],['👍','thumbs up yes'],['👎','thumbs down no'],['👋','wave hello'],['🙌','hooray raised hands'],['👏','clap applause'],['🙏','thanks pray'],['🤝','handshake'],['✨','sparkles'],['🔥','fire'],['🎉','party celebration'],['💯','hundred'],['👀','eyes look'],['☕','coffee'],['🍕','pizza'],['🌙','moon night'],['🌻','sunflower'],['🐱','cat'],['🐶','dog'],['🦊','fox']];
+const emojis = [
+  // Smileys
+  ['😀','grinning happy'],['😃','smile big eyes happy'],['😄','smile happy'],['😁','beaming grin'],['😆','laughing squint'],['😅','sweat smile'],['🤣','rolling floor laughing rofl'],['😂','laugh tears joy'],
+  ['🙂','slight smile'],['🙃','upside down'],['😉','wink'],['😊','smile blush'],['😇','angel halo innocent'],['🥰','smiling hearts love'],['😍','love heart eyes'],['🤩','star struck excited'],
+  ['😘','kiss blow'],['😗','kissing'],['😋','yum tasty'],['😛','tongue out'],['😜','wink tongue silly'],['🤪','zany crazy'],['😝','squint tongue'],['🤑','money mouth'],
+  ['🤗','hug hugging'],['🤭','hand over mouth oops'],['🤫','shush quiet'],['🤔','thinking'],['🤐','zipper mouth secret'],['🤨','raised eyebrow skeptical'],['😐','neutral face'],['😑','expressionless'],
+  ['😶','no mouth speechless'],['😏','smirk'],['😒','unamused'],['🙄','eye roll'],['😬','grimace awkward'],['😌','relieved calm'],['😔','pensive'],['😪','sleepy'],
+  ['🤤','drool'],['😴','sleep tired'],['😷','mask sick'],['🤒','thermometer ill fever'],['🤕','bandage hurt'],['🤢','nauseated'],['🤮','vomit'],['🥵','hot face'],
+  ['🥶','cold face freezing'],['🥴','woozy dizzy'],['😵','dizzy face'],['🤯','mind blown exploding head'],['🤠','cowboy'],['🥳','party celebration'],['🥸','disguise'],['😎','cool sunglasses'],
+  ['🤓','nerd glasses'],['🧐','monocle'],['😕','confused'],['😟','worried'],['🙁','slight frown'],['😮','open mouth surprised'],['😯','hushed'],['😲','astonished shocked'],
+  ['😳','flushed embarrassed'],['🥺','pleading puppy eyes'],['🥹','touched tears'],['😦','frown open mouth'],['😨','fearful scared'],['😰','anxious sweat'],['😥','sad relieved'],['😢','sad cry'],
+  ['😭','cry sob'],['😱','scream fear'],['😖','confounded'],['😣','persevere'],['😞','disappointed'],['😓','downcast sweat'],['😩','weary'],['😫','tired exhausted'],
+  ['🥱','yawn bored'],['😤','triumph huff'],['😡','pouting angry'],['😠','angry mad'],['🤬','swearing cursing'],['😈','smiling devil'],['💀','skull dead'],['💩','poop'],
+  ['🤡','clown'],['👻','ghost'],['👽','alien'],['🤖','robot'],['😺','grinning cat'],['😹','cat tears joy'],['😻','cat heart eyes'],['🙈','see no evil monkey'],
+  ['🙉','hear no evil monkey'],['🙊','speak no evil monkey'],
+  // Hearts and symbols
+  ['❤️','red heart love'],['🧡','orange heart'],['💛','yellow heart'],['💚','green heart'],['💙','blue heart'],['💜','purple heart'],['🖤','black heart'],['🤍','white heart'],
+  ['🤎','brown heart'],['💔','broken heart'],['❣️','heart exclamation'],['💕','two hearts'],['💞','revolving hearts'],['💓','beating heart'],['💗','growing heart'],['💖','sparkling heart'],
+  ['💘','heart arrow cupid'],['💝','heart ribbon gift'],['💯','hundred'],['💢','anger symbol'],['💥','collision boom'],['💫','dizzy star'],['💦','sweat droplets'],['💨','dash'],
+  ['💬','speech bubble'],['💭','thought bubble'],['💤','zzz sleep'],['✅','check mark done'],['❌','cross no'],['❓','question'],['❗','exclamation'],['⚠️','warning'],
+  ['🚫','prohibited'],['♻️','recycle'],['➕','plus'],['➖','minus'],['🆗','ok button'],['🆒','cool button'],['🆕','new button'],['🔔','bell'],
+  ['🎵','music note'],['🎶','music notes'],['⭐','star'],['🌟','glowing star'],['✨','sparkles'],['⚡','lightning zap'],['🔥','fire'],['💡','idea light bulb'],
+  // Hands and people
+  ['👍','thumbs up yes'],['👎','thumbs down no'],['👋','wave hello'],['🤚','raised back of hand'],['✋','raised hand stop'],['🖖','vulcan salute'],['👌','ok hand'],['🤌','pinched fingers'],
+  ['🤏','pinching small'],['✌️','victory peace'],['🤞','crossed fingers luck'],['🤟','love you gesture'],['🤘','rock on horns'],['🤙','call me'],['👈','point left'],['👉','point right'],
+  ['👆','point up'],['👇','point down'],['☝️','index up'],['✊','raised fist'],['👊','fist bump punch'],['🤛','left fist'],['🤜','right fist'],['👏','clap applause'],
+  ['🙌','hooray raised hands'],['👐','open hands'],['🤲','palms up'],['🤝','handshake'],['🙏','thanks pray'],['✍️','writing'],['💪','strong muscle flex'],['🧠','brain smart'],
+  ['👀','eyes look'],['👁️','eye'],['👅','tongue'],['👄','mouth lips'],['🫶','heart hands'],['🤷','shrug'],['🤦','facepalm'],['🙋','raising hand'],
+  ['🙇','bow'],['💁','tipping hand'],['🙅','no gesture'],['🙆','ok gesture'],['🕺','dancing man'],['💃','dancing woman'],['🏃','running'],['🚶','walking'],
+  // Animals and nature
+  ['🐱','cat'],['🐶','dog'],['🦊','fox'],['🐭','mouse'],['🐹','hamster'],['🐰','rabbit bunny'],['🐻','bear'],['🐼','panda'],
+  ['🐨','koala'],['🐯','tiger'],['🦁','lion'],['🐮','cow'],['🐷','pig'],['🐸','frog'],['🐵','monkey'],['🐔','chicken'],
+  ['🐧','penguin'],['🐦','bird'],['🐤','chick'],['🦉','owl'],['🦄','unicorn'],['🐝','bee'],['🦋','butterfly'],['🐌','snail'],
+  ['🐞','ladybug'],['🐢','turtle'],['🐍','snake'],['🐙','octopus'],['🐳','whale'],['🐬','dolphin'],['🐟','fish'],['🦈','shark'],
+  ['🦖','dinosaur t-rex'],['🌸','cherry blossom'],['🌹','rose'],['🌻','sunflower'],['🌷','tulip'],['🌱','seedling sprout'],['🌲','evergreen tree'],['🌴','palm tree'],
+  ['🌵','cactus'],['🍀','four leaf clover luck'],['🍁','maple leaf autumn'],['🍄','mushroom'],['🌍','earth globe world'],['🌙','moon night'],['☀️','sun sunny'],['⛅','partly cloudy'],
+  ['🌧️','rain'],['❄️','snowflake'],['☃️','snowman'],['🌈','rainbow'],['🌊','ocean water sea'],['☔','umbrella rain'],
+  // Food and drink
+  ['🍎','apple'],['🍌','banana'],['🍉','watermelon'],['🍓','strawberry'],['🍒','cherries'],['🍑','peach'],['🍍','pineapple'],['🥑','avocado'],
+  ['🍆','eggplant'],['🌶️','hot pepper spicy'],['🥕','carrot'],['🌽','corn'],['🥐','croissant'],['🍞','bread'],['🧀','cheese'],['🥚','egg'],
+  ['🥞','pancakes'],['🥓','bacon'],['🍔','burger hamburger'],['🍟','fries'],['🍕','pizza'],['🌭','hot dog'],['🌮','taco'],['🌯','burrito'],
+  ['🍝','spaghetti pasta'],['🍜','ramen noodles'],['🍣','sushi'],['🍿','popcorn'],['🍩','donut doughnut'],['🍪','cookie'],['🎂','birthday cake'],['🍰','cake slice'],
+  ['🧁','cupcake'],['🍫','chocolate'],['🍬','candy'],['🍦','ice cream'],['☕','coffee'],['🍵','tea'],['🧋','bubble tea boba'],['🥤','soda cup'],
+  ['🍺','beer'],['🍻','cheers beers'],['🥂','cheers champagne toast'],['🍷','wine'],['🍸','cocktail'],['🧃','juice box'],
+  // Activities, objects and travel
+  ['🎉','party celebration'],['🎊','confetti'],['🎈','balloon'],['🎁','gift present'],['🏆','trophy winner'],['🥇','gold medal first'],['⚽','soccer football'],['🏀','basketball'],
+  ['🏈','american football'],['⚾','baseball'],['🎾','tennis'],['🏐','volleyball'],['🎮','video game controller'],['🕹️','joystick'],['🎲','dice game'],['🧩','puzzle'],
+  ['🎯','target bullseye'],['🎨','art palette'],['🎬','movie clapper'],['🎤','microphone karaoke'],['🎧','headphones'],['🎸','guitar'],['🎹','piano keyboard'],['📚','books'],
+  ['📖','open book'],['✏️','pencil'],['📝','memo note'],['📌','pushpin'],['📎','paperclip'],['📅','calendar'],['⏰','alarm clock'],['⌛','hourglass'],
+  ['💻','laptop computer'],['📱','phone mobile'],['📷','camera'],['📺','tv television'],['🔒','lock locked'],['🔓','unlocked'],['🔑','key'],['🛡️','shield'],
+  ['💰','money bag'],['💸','money wings'],['💎','gem diamond'],['🔮','crystal ball'],['🧸','teddy bear'],['🪴','potted plant'],['🛏️','bed'],['🚀','rocket launch'],
+  ['✈️','airplane'],['🚗','car'],['🚲','bicycle'],['🚂','train'],['⛵','sailboat'],['🏠','house home'],['🏖️','beach'],['⛰️','mountain'],
+  ['🏕️','camping'],['🗺️','map'],['🌋','volcano'],['🎃','jack o lantern halloween pumpkin'],['🎄','christmas tree'],['🏳️‍🌈','rainbow flag pride']
+];
 let emojiSelection = [0, 0];
 function toggleEmoji(open) {
   $('#emoji-picker').hidden = !open; $('#emoji-toggle').setAttribute('aria-expanded', String(open));
