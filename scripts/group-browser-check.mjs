@@ -141,6 +141,9 @@ try {
     state.members = state.members.map(member => member.id === ub.id ? { ...member, publicKey: substitute } : member);
     await route.fulfill({ json: state });
   });
+  // Sends reuse the room state loaded when the room opens, so reopen it through the substituting route.
+  await a.locator('#groups .group-room').click();
+  await a.waitForFunction(() => !document.querySelector('#message').disabled);
   const sentBefore = sent.length;
   await a.locator('#message').fill('must not send to substituted key'); await a.locator('.send-button').click();
   await a.waitForFunction(() => document.querySelector('#error').textContent.includes('Encryption identity changed'));

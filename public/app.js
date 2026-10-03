@@ -13,7 +13,7 @@ const conversationKey = target => target ? `${target.group ? 'group' : target.pe
 async function api(url, data) {
   const response = await fetch(`/api/${url}`, data === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
   const result = await response.json();
-  if (!response.ok) throw new Error(result.error || 'Could not connect. Try again.');
+  if (!response.ok) throw Object.assign(new Error(result.error || 'Could not connect. Try again.'), { status: response.status });
   return result;
 }
 function error(message = '') { $('#error').textContent = message; $('#error').hidden = !message; }
@@ -161,12 +161,42 @@ async function select(target) {
       peerIdentity = person; updateComposerState();
     }
     if (target.room) await api('join', target);
-    const history = await Promise.all((await api(`${target.group ? 'groups/history' : 'history'}?${new URLSearchParams(target)}`))
-      .filter(message => validMessageRoute(message) && matches(message, target)).map(decodePrivate));
-    if (version !== revision) return;
-    messages = [...new Map([...history, ...messages].map(m => [m.id, m])).values()].sort((a,b) => a.time.localeCompare(b.time)).slice(rooms.find(r => r.id === target.room)?.persistent ? 0 : -100);
-    renderMessages();
+    await syncHistory(target, version);
   } catch (e) { if (version === revision) { error(e.message); if (target.peer || target.group) { peerIdentity = null; groupState = null; updateComposerState(e.message); } } }
+}
+const byTime = list => list.sort((a, b) => a.time.localeCompare(b.time)).slice(rooms.find(r => r.id === current?.room)?.persistent ? 0 : -100);
+// Loads the server's history and merges it with what is shown. Messages already decrypted are kept
+// as they are (no second decryption or redraw), messages missed while offline are added, and messages
+// removed meanwhile disappear. Messages that arrived live during the request are kept.
+async function syncHistory(target, version) {
+  const before = new Set(messages.map(m => m.id));
+  const known = new Map(messages.filter(m => !m.locked).map(m => [m.id, m]));
+  const unchanged = (local, remote) => local && (local.editVersion || 0) === (remote.editVersion || 0) && Boolean(local.shared) === Boolean(remote.shared) &&
+    Boolean(local.reply?.removed) === Boolean(remote.reply?.removed) && (local.attachment?.id || null) === (remote.attachment?.id || null);
+  const list = (await api(`${target.group ? 'groups/history' : 'history'}?${new URLSearchParams(target)}`)).filter(message => validMessageRoute(message) && matches(message, target));
+  const history = await Promise.all(list.map(m => {
+    const local = known.get(m.id);
+    // Public messages are plaintext, so the server copy is always current.
+    return target.room ? m : unchanged(local, m) ? local : decodePrivate(m);
+  }));
+  if (version !== revision) return;
+  const ids = new Set(history.map(m => m.id));
+  messages = byTime([...history, ...messages.filter(m => !ids.has(m.id) && !before.has(m.id))]);
+  renderMessages();
+}
+// After a reconnect, catch up on what happened while the connection was down without clearing the chat.
+async function resync() {
+  const target = current, version = revision;
+  if (!target) return;
+  try {
+    if (target.group) {
+      const state = await api(`groups/state?group=${encodeURIComponent(target.group)}`);
+      if (version !== revision) return;
+      groupState = state; updateHeading();
+    }
+    if (target.peer && !peerIdentity) { await select(target); return; }
+    await syncHistory(target, version);
+  } catch (e) { if (version === revision && e.status !== 403) error(e.message); }
 }
 // Adds room messages that another member shared with this member after they joined.
 async function loadSharedHistory(group) {
@@ -180,79 +210,100 @@ async function loadSharedHistory(group) {
     renderMessages();
   } catch(e) { error(e.message); }
 }
+// Rendered rows are reused while nothing they show has changed, so a new message in a busy room adds
+// one row instead of rebuilding the whole conversation (and re-requesting its invite cards).
+const renderedRows = new Map();
+let stickToBottom = false;
 function renderMessages() {
-  $('#messages').replaceChildren(...messages.map(message => {
-    const own = message.sender === me.id;
-    const row = element('article', 'chat-message'), content = element('div', 'message-content'), meta = element('div', 'message-meta');
-    const displayAsAdmin = message.displayAsAdmin;
-    meta.append(username(message.alias, 'message-name', displayAsAdmin));
-    if (own) meta.append(element('span', 'you-tag', 'YOU'));
-    meta.append(element('time', 'message-time', rooms.find(r => r.id === message.room)?.persistent ? new Date(message.time).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : new Date(message.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })));
-    row.id = `message-${message.id}`;
-    if (message.mentions?.some(person => person.id === me.id)) row.classList.add('mentioned');
-    const replyButton = element('button', 'message-reply', 'Reply');
-    replyButton.type = 'button'; replyButton.disabled = Boolean(message.locked) || (rooms.find(r => r.id === message.room)?.adminOnly && !me.admin); replyButton.onclick = () => { setReply(message); $('#message').focus(); };
-    meta.append(replyButton);
-    if (message.editedAt) meta.append(element('span', 'message-time', '(edited)'));
-    if (message.shared && !message.locked) {
-      const shared = element('span', 'message-time', '(earlier message)');
-      shared.title = 'Sent before you joined. Another member shared it with you, and the author’s signature was verified.';
-      meta.append(shared);
-    }
-    // Encrypted messages carry the sender's own clock. Flag a large gap from the relay's timestamp.
-    if (Number.isFinite(message.sentAt) && Math.abs(Date.parse(message.time) - message.sentAt) > 5 * 60000) {
-      const skew = element('span', 'message-time', `(sender time ${new Date(message.sentAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })})`);
-      skew.title = 'The encrypted sender time differs from the server time by more than 5 minutes. A wrong device clock or a delayed relay can cause this.';
-      meta.append(skew);
-    }
-    if ((own || (me.admin && rooms.find(r => r.id === message.room)?.adminOnly)) && !message.locked) {
-      const edit = element('button', 'message-reply', 'Edit'); edit.type = 'button';
-      edit.onclick = () => {
-        if (editSaving) return;
-        editingMessage = { ...message };
-        $('#edit-message-text').value = message.text;
-        $('#edit-message-text').required = !message.file;
-        $('#edit-message-error').textContent = '';
-        $('#edit-message-dialog').showModal(); $('#edit-message-text').focus();
-      };
-      meta.append(edit);
-    }
-    if (own || (message.group ? groupState && canManage(groupState, message.sender) : me?.admin)) {
-      const remove = element('button', 'message-remove', own ? 'Delete' : 'Remove');
-      remove.type = 'button'; remove.title = 'Remove this message for everyone';
-      remove.onclick = async () => { remove.disabled = true; try { applyRemoval(await api(message.group ? 'groups/message-delete' : own ? 'message/delete' : 'admin/remove-message', { id: message.id, ...(message.group ? { group: message.group } : {}) })); } catch(e) { error(e.message); remove.disabled = false; } };
-      meta.append(remove);
-    }
-    content.append(meta);
-    if (message.reply && !message.locked) {
-      const original = message.encrypted ? messages.find(m => m.id === message.reply.id && !m.locked) : message.reply;
-      const quote = element('button', 'reply-quote', message.reply.removed ? 'Original message removed' : original ? `${original.alias}: ${original.text || fileKinds[original.file?.kind] || 'Attachment'}` : 'Original message unavailable');
-      quote.type = 'button'; quote.disabled = message.reply.removed;
-      quote.onclick = () => { const original = document.getElementById(`message-${message.reply.id}`); if (original) { original.scrollIntoView({ block: 'center' }); original.tabIndex = -1; original.focus({ preventScroll: true }); } else error('The original message is no longer in the recent history.'); };
-      content.append(quote);
-    }
-    const body = element('p', 'message-text'); let offset = 0;
-    for (const mention of message.mentions || []) {
-      body.append(document.createTextNode(message.text.slice(offset, mention.start)), element('mark', 'mention', message.text.slice(mention.start, mention.end)));
-      offset = mention.end;
-    }
-    body.append(document.createTextNode(message.text.slice(offset))); content.append(body);
-    if (!message.locked && message.text) renderInviteCards(message, content);
-    if (message.file && !message.locked) renderAttachment(message, content);
-    row.append(avatar(message.alias, own), content); return row;
-  }));
+  const scroll = $('#chat-scroll'), atBottom = stickToBottom || scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 80;
+  stickToBottom = false;
+  const rows = messages.map(message => {
+    const persistent = Boolean(rooms.find(r => r.id === message.room)?.persistent), adminOnly = Boolean(rooms.find(r => r.id === message.room)?.adminOnly);
+    const original = message.reply && message.encrypted ? messages.find(m => m.id === message.reply.id && !m.locked) : null;
+    const key = [me.id, me.admin, persistent, adminOnly, message.group ? Boolean(groupState && canManage(groupState, message.sender)) : ''].join('|');
+    const cached = renderedRows.get(message.id);
+    if (cached?.message === message && cached.key === key && cached.original === original) return cached.row;
+    const row = renderMessage(message);
+    renderedRows.set(message.id, { message, key, original, row });
+    return row;
+  });
+  const shown = new Set(messages.map(m => m.id));
+  for (const id of renderedRows.keys()) if (!shown.has(id)) renderedRows.delete(id);
+  const list = $('#messages');
+  // Only touch the DOM when the order or a row changed.
+  if (rows.length !== list.children.length || rows.some((row, index) => list.children[index] !== row)) list.replaceChildren(...rows);
   $('#empty-chat').hidden = messages.length > 0 || !current;
   $('#empty-chat').textContent = current?.group ? 'No messages yet. Start the conversation below.' : 'It’s quiet in here. Be the first to say hello.';
   $('#welcome').hidden = Boolean(current?.group) || messages.length > 3;
   $('.day-divider').hidden = Boolean(current?.group) && messages.length === 0;
-  $('#chat-scroll').scrollTop = $('#chat-scroll').scrollHeight;
+  // Keep reading position when someone is scrolled up; follow new messages otherwise.
+  if (atBottom) scroll.scrollTop = scroll.scrollHeight;
+}
+function renderMessage(message) {
+  const own = message.sender === me.id;
+  const row = element('article', 'chat-message'), content = element('div', 'message-content'), meta = element('div', 'message-meta');
+  const displayAsAdmin = message.displayAsAdmin;
+  meta.append(username(message.alias, 'message-name', displayAsAdmin));
+  if (own) meta.append(element('span', 'you-tag', 'YOU'));
+  meta.append(element('time', 'message-time', rooms.find(r => r.id === message.room)?.persistent ? new Date(message.time).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : new Date(message.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })));
+  row.id = `message-${message.id}`;
+  if (message.mentions?.some(person => person.id === me.id)) row.classList.add('mentioned');
+  const replyButton = element('button', 'message-reply', 'Reply');
+  replyButton.type = 'button'; replyButton.disabled = Boolean(message.locked) || (rooms.find(r => r.id === message.room)?.adminOnly && !me.admin); replyButton.onclick = () => { setReply(message); $('#message').focus(); };
+  meta.append(replyButton);
+  if (message.editedAt) meta.append(element('span', 'message-time', '(edited)'));
+  if (message.shared && !message.locked) {
+    const shared = element('span', 'message-time', '(earlier message)');
+    shared.title = 'Sent before you joined. Another member shared it with you, and the author’s signature was verified.';
+    meta.append(shared);
+  }
+  // Encrypted messages carry the sender's own clock. Flag a large gap from the relay's timestamp.
+  if (Number.isFinite(message.sentAt) && Math.abs(Date.parse(message.time) - message.sentAt) > 5 * 60000) {
+    const skew = element('span', 'message-time', `(sender time ${new Date(message.sentAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })})`);
+    skew.title = 'The encrypted sender time differs from the server time by more than 5 minutes. A wrong device clock or a delayed relay can cause this.';
+    meta.append(skew);
+  }
+  if ((own || (me.admin && rooms.find(r => r.id === message.room)?.adminOnly)) && !message.locked) {
+    const edit = element('button', 'message-reply', 'Edit'); edit.type = 'button';
+    edit.onclick = () => {
+      if (editSaving) return;
+      editingMessage = { ...message };
+      $('#edit-message-text').value = message.text;
+      $('#edit-message-text').required = !message.file;
+      $('#edit-message-error').textContent = '';
+      $('#edit-message-dialog').showModal(); $('#edit-message-text').focus();
+    };
+    meta.append(edit);
+  }
+  if (own || (message.group ? groupState && canManage(groupState, message.sender) : me?.admin)) {
+    const remove = element('button', 'message-remove', own ? 'Delete' : 'Remove');
+    remove.type = 'button'; remove.title = 'Remove this message for everyone';
+    remove.onclick = async () => { remove.disabled = true; try { applyRemoval(await api(message.group ? 'groups/message-delete' : own ? 'message/delete' : 'admin/remove-message', { id: message.id, ...(message.group ? { group: message.group } : {}) })); } catch(e) { error(e.message); remove.disabled = false; } };
+    meta.append(remove);
+  }
+  content.append(meta);
+  if (message.reply && !message.locked) {
+    const original = message.encrypted ? messages.find(m => m.id === message.reply.id && !m.locked) : message.reply;
+    const quote = element('button', 'reply-quote', message.reply.removed ? 'Original message removed' : original ? `${original.alias}: ${original.text || fileKinds[original.file?.kind] || 'Attachment'}` : 'Original message unavailable');
+    quote.type = 'button'; quote.disabled = message.reply.removed;
+    quote.onclick = () => { const original = document.getElementById(`message-${message.reply.id}`); if (original) { original.scrollIntoView({ block: 'center' }); original.tabIndex = -1; original.focus({ preventScroll: true }); } else error('The original message is no longer in the recent history.'); };
+    content.append(quote);
+  }
+  const body = element('p', 'message-text'); let offset = 0;
+  for (const mention of message.mentions || []) {
+    body.append(document.createTextNode(message.text.slice(offset, mention.start)), element('mark', 'mention', message.text.slice(mention.start, mention.end)));
+    offset = mention.end;
+  }
+  body.append(document.createTextNode(message.text.slice(offset))); content.append(body);
+  if (!message.locked && message.text) renderInviteCards(message, content);
+  if (message.file && !message.locked) renderAttachment(message, content);
+  row.append(avatar(message.alias, own), content); return row;
 }
 function applyRemoval(removed) {
   if (!matches(removed)) return;
   const { id } = removed;
   if (editingMessage?.id === id) { $('#edit-message-dialog').close(); editingMessage = null; }
-  revokeFile(id); messages = messages.filter(message => message.id !== id);
-  for (const message of messages) if (message.reply?.id === id) message.reply = { id, removed: true };
+  revokeFile(id); messages = messages.filter(message => message.id !== id).map(message => message.reply?.id === id ? { ...message, reply: { id, removed: true } } : message);
   if (replying?.id === id) setReply(null);
   renderMessages();
 }
@@ -273,7 +324,9 @@ async function receive(message) {
   if (matches(message) && !messages.some(m => m.id === message.id)) {
     const version = revision;
     const needsAuthentication = !message.room;
-    messages = [...messages, needsAuthentication ? { ...message, text: 'Decrypting…', file: null, mentions: [], locked: true } : message].slice(rooms.find(r => r.id === message.room)?.persistent ? 0 : -100); renderMessages();
+    // Messages are ordered by server time, so every member sees the same order even when events arrive out of order.
+    if (message.sender === me.id) stickToBottom = true;
+    messages = byTime([...messages, needsAuthentication ? { ...message, text: 'Decrypting…', file: null, mentions: [], locked: true } : message]); renderMessages();
     if (needsAuthentication) {
       const decoded = await decodePrivate(message);
       if (version !== revision) return;
@@ -295,10 +348,9 @@ async function applyEdit(message) {
   messages = messages.map(m => m.id === message.id && m.editVersion === message.editVersion ? { ...decoded, reply: m.reply } : m);
   const latest = messages.find(m => m.id === message.id);
   if (!latest || latest.editVersion !== message.editVersion) return;
-  if (message.room) for (const reply of messages) if (reply.reply?.id === message.id) reply.reply.text = message.text.slice(0, 200);
+  if (message.room) messages = messages.map(reply => reply.reply?.id === message.id ? { ...reply, reply: { ...reply.reply, text: message.text.slice(0, 200) } } : reply);
   if (replying?.id === message.id) setReply(latest);
-  const scroll = $('#chat-scroll'), top = scroll.scrollTop, atBottom = scroll.scrollHeight - top - scroll.clientHeight < 60;
-  renderMessages(); if (!atBottom) scroll.scrollTop = top;
+  renderMessages();
 }
 $('#cancel-edit-message').onclick = () => $('#edit-message-dialog').close();
 $('#edit-message-form').onsubmit = async event => {
@@ -554,13 +606,26 @@ $('#composer').onsubmit = async event => {
     if (text.startsWith('/') && !text.startsWith('//')) await runCommand(text, reply);
     else if (target.group) {
       if (!encryptionClient) throw new Error(encryptionError || 'Room encryption is unavailable.');
-      const state = await api(`groups/state?group=${encodeURIComponent(target.group)}`);
-      const file = pending ? await uploadEncryptedFile(pending, { group: state.id, version: state.version }) : null;
-      uploadId = file?.id;
+      // The room state pushed over the event stream is normally current, which saves a round trip per
+      // message. If membership changed in the meantime the server answers 409, and the message is
+      // encrypted again for the current members (up to three attempts) instead of failing.
+      let state = groupState?.id === target.group && groupState.joined ? groupState : null;
       const id = crypto.randomUUID();
-      const envelopes = await encryptionClient.encryptGroup({ id, group: state.id, version: state.version, sender: me.id,
-        text: text.startsWith('//') ? text.slice(1) : text, replyTo: reply?.id || null, file, shareable: Boolean(state.shareHistory) }, state.members);
-      await receive(await api('groups/message', { group: state.id, version: state.version, id, envelopes, replyTo: reply?.id, attachmentId: uploadId, shareable: Boolean(state.shareHistory) }));
+      for (let attempt = 1; ; attempt++) {
+        state ||= await api(`groups/state?group=${encodeURIComponent(target.group)}`);
+        try {
+          const file = pending ? await uploadEncryptedFile(pending, { group: state.id, version: state.version }) : null;
+          uploadId = file?.id;
+          const envelopes = await encryptionClient.encryptGroup({ id, group: state.id, version: state.version, sender: me.id,
+            text: text.startsWith('//') ? text.slice(1) : text, replyTo: reply?.id || null, file, shareable: Boolean(state.shareHistory) }, state.members);
+          await receive(await api('groups/message', { group: state.id, version: state.version, id, envelopes, replyTo: reply?.id, attachmentId: uploadId, shareable: Boolean(state.shareHistory) }));
+          break;
+        } catch (e) {
+          if (attempt >= 3 || e.status !== 409) throw e;
+          if (uploadId) { fetch(`/api/attachments/${encodeURIComponent(uploadId)}`, { method: 'DELETE' }).catch(() => {}); uploadId = null; }
+          state = null;
+        }
+      }
       uploadId = null; status('');
       if (pendingFile === pending) clearPendingFile();
     } else if (target.peer) {
@@ -743,6 +808,57 @@ $('#cancel-delete').onclick = () => $('#delete-dialog').close();
 $('#confirm-delete').onclick = async () => { $('#confirm-delete').disabled = true; try { await api(deleting.group ? 'admin/groups/delete' : 'admin/delete', deleting.group ? { group: deleting.id } : { id: deleting.id }); await refreshAdminState(); $('#delete-dialog').close(); } catch(e) { $('#delete-error').textContent = e.message; } finally { $('#confirm-delete').disabled = false; } };
 $('#cancel-ban').onclick = () => $('#ban-dialog').close();
 $('#confirm-ban').onclick = async () => { $('#confirm-ban').disabled = true; try { await api('admin/ban', { id: banning.id }); $('#ban-dialog').close(); await refreshAdminState(); } catch(e) { $('#ban-error').textContent = e.message; } finally { $('#confirm-ban').disabled = false; } };
+// The event stream delivers every live update. Slow or anonymising networks (such as Tor) can leave
+// it open but silent, or make the browser give up reconnecting, so the server sends a ping every
+// 15 seconds and the page reconnects itself when nothing arrives for 45 seconds. Every (re)connect
+// catches up on what was missed instead of reloading the conversation.
+const seenPeople = new Set();
+let lastEvent = 0, reconnectTimer = 0, reconnectDelay = 2000, groupsChangedTimer = 0;
+function connect() {
+  clearTimeout(reconnectTimer); stream?.close();
+  if (signingOut || !me) return;
+  stream = new EventSource('/api/events'); lastEvent = Date.now();
+  stream.onopen = () => { lastEvent = Date.now(); reconnectDelay = 2000; $('#connection').textContent = 'Connected'; $('#connection').classList.add('live'); resync(); };
+  stream.onerror = async () => {
+    if (signingOut) return;
+    $('#connection').textContent = 'Reconnecting…'; $('#connection').classList.remove('live');
+    // The browser retries by itself unless the server refused the stream; then retry with a growing delay.
+    if (stream.readyState === EventSource.CLOSED) { reconnectTimer = setTimeout(connect, reconnectDelay); reconnectDelay = Math.min(reconnectDelay * 2, 30000); }
+    try { const auth = await api('auth/status'); if (!signingOut && (!auth.me || auth.me.id !== me.id)) { stream.close(); clearTimeout(reconnectTimer); location.replace('/#entry'); } } catch {}
+  };
+  stream.addEventListener('ping', () => { lastEvent = Date.now(); });
+  stream.addEventListener('private-preferences', event => applyPrivatePreferences(JSON.parse(event.data)));
+  stream.addEventListener('identity-ready', event => { const { id } = JSON.parse(event.data); if (current?.peer === id && !peerIdentity) select(current); });
+  stream.addEventListener('session', event => updateSession(JSON.parse(event.data)));
+  // Several room changes often arrive together; one refresh covers them all.
+  stream.addEventListener('groups-changed', () => { clearTimeout(groupsChangedTimer); groupsChangedTimer = setTimeout(() => { refreshGroups(); refreshAdminState(); }, 250); });
+  stream.addEventListener('group-state', event => groupStateChanged(JSON.parse(event.data)));
+  stream.addEventListener('history-shared', event => { const { group } = JSON.parse(event.data); if (current?.group === group) loadSharedHistory(group); });
+  stream.addEventListener('group-removed', event => {
+    const removed = JSON.parse(event.data); drafts.delete(`group:${removed.group}`);
+    if (current?.group === removed.group) closeCurrentGroup(removed.reason);
+    if (groupPanel?.id === removed.group) { $('#group-dialog').close(); groupPanel = null; }
+    refreshGroups();
+  });
+  stream.addEventListener('appearance', event => updateAppearance(JSON.parse(event.data)));
+  stream.addEventListener('people', event => {
+    people = JSON.parse(event.data);
+    // A new session of someone you blocked must be hidden too, and only the server knows whose it is.
+    // Ask only when you have blocked someone and a session appears that this page has not seen yet.
+    const fresh = people.some(person => !seenPeople.has(person.id));
+    for (const person of people) seenPeople.add(person.id);
+    if (fresh && blockedUsers.length) api('private/preferences').then(applyPrivatePreferences).catch(() => {});
+    renderPeople(); renderDMs(); renderAdminPeople();
+  });
+  stream.addEventListener('rooms', event => { rooms = JSON.parse(event.data); if (current?.room && !rooms.some(r => r.id === current.room)) { select(rooms[0] ? { room: rooms[0].id } : null); error('That room was removed by the host.'); } else if (!current && rooms[0]) select({ room: rooms[0].id }); else { renderRooms(); updateHeading(); } });
+  stream.addEventListener('message', event => receive(JSON.parse(event.data)));
+  stream.addEventListener('message-edited', event => applyEdit(JSON.parse(event.data)));
+  stream.addEventListener('message-removed', event => applyRemoval(JSON.parse(event.data)));
+  stream.addEventListener('moderation', () => { if (me.admin) refreshAdminState(); });
+}
+function checkConnection() {
+  if (stream && !signingOut && stream.readyState !== EventSource.CLOSED && Date.now() - lastEvent > 45000) connect();
+}
 async function start() {
   try {
     const auth = await api('auth/status');
@@ -759,33 +875,17 @@ async function start() {
     if (me.admin) await refreshAdminState();
     await select(rooms[0] ? { room: rooms[0].id } : null);
     openInviteLink();
-    stream = new EventSource('/api/events');
-    stream.onopen = () => { $('#connection').textContent = 'Connected'; $('#connection').classList.add('live'); if (current) select(current); };
-    stream.onerror = async () => { if (signingOut) return; $('#connection').textContent = 'Reconnecting…'; $('#connection').classList.remove('live'); try { const auth = await api('auth/status'); if (!signingOut && (!auth.me || auth.me.id !== me.id)) { stream.close(); location.replace('/#entry'); } } catch {} };
-    stream.addEventListener('private-preferences', event => applyPrivatePreferences(JSON.parse(event.data)));
-    stream.addEventListener('identity-ready', event => { const { id } = JSON.parse(event.data); if (current?.peer === id && !peerIdentity) select(current); });
-    stream.addEventListener('session', event => updateSession(JSON.parse(event.data)));
-    stream.addEventListener('groups-changed', () => { refreshGroups(); refreshAdminState(); });
-    stream.addEventListener('group-state', event => groupStateChanged(JSON.parse(event.data)));
-    stream.addEventListener('history-shared', event => { const { group } = JSON.parse(event.data); if (current?.group === group) loadSharedHistory(group); });
-    stream.addEventListener('group-removed', event => {
-      const removed = JSON.parse(event.data); drafts.delete(`group:${removed.group}`);
-      if (current?.group === removed.group) closeCurrentGroup(removed.reason);
-      if (groupPanel?.id === removed.group) { $('#group-dialog').close(); groupPanel = null; }
-      refreshGroups();
-    });
-    stream.addEventListener('appearance', event => updateAppearance(JSON.parse(event.data)));
-    stream.addEventListener('people', event => { people = JSON.parse(event.data); api('private/preferences').then(applyPrivatePreferences).catch(() => {}); for (const person of people) updateAppearance(person); renderPeople(); renderDMs(); renderAdminPeople(); });
-    stream.addEventListener('rooms', event => { rooms = JSON.parse(event.data); if (current?.room && !rooms.some(r => r.id === current.room)) { select(rooms[0] ? { room: rooms[0].id } : null); error('That room was removed by the host.'); } else if (!current && rooms[0]) select({ room: rooms[0].id }); else { renderRooms(); updateHeading(); } });
-    stream.addEventListener('message', event => receive(JSON.parse(event.data)));
-    stream.addEventListener('message-edited', event => applyEdit(JSON.parse(event.data)));
-    stream.addEventListener('message-removed', event => applyRemoval(JSON.parse(event.data)));
-    stream.addEventListener('moderation', () => { if (me.admin) refreshAdminState(); });
+    connect();
+    setInterval(checkConnection, 5000);
+    // Phones pause background tabs and switch networks; check the stream as soon as the page is back.
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkConnection(); });
+    window.addEventListener('online', () => { if (stream) connect(); });
     setInterval(() => {
       let changed = false;
-      for (const message of messages) if (message.file && message.attachment?.expiresAt <= Date.now() && !message.fileExpired) {
-        message.fileExpired = true; revokeFile(message.id); changed = true;
-      }
+      messages = messages.map(message => {
+        if (!message.file || !(message.attachment?.expiresAt <= Date.now()) || message.fileExpired) return message;
+        revokeFile(message.id); changed = true; return { ...message, fileExpired: true };
+      });
       if (changed) renderMessages();
     }, 10000);
   } catch(e) { error(e.message); $('#connection').textContent = 'Could not connect'; }
@@ -822,7 +922,7 @@ for (const key of Object.keys(soundSettings)) {
 $('#test-sound').onclick = () => playSound().then(() => { $('#sound-status').textContent = 'Sound is enabled in this tab.'; }).catch(e => { $('#sound-status').textContent = e.message; });
 function clearSignedOutPage() {
   revision++; current = null; groupState = null;
-  stream?.close(); encryptionClient?.dispose(); encryptionClient = null; peerIdentity = null; verificationTarget = null;
+  clearTimeout(reconnectTimer); stream?.close(); encryptionClient?.dispose(); encryptionClient = null; peerIdentity = null; verificationTarget = null;
   messages = []; drafts.clear(); clearPendingFile(); clearFileURLs(); setReply(null);
   editingMessage = null; $('#edit-message-text').value = ''; $('#edit-message-dialog').close();
   $('#message').value = ''; renderMessages(); updateComposerState();

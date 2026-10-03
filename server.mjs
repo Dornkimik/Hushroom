@@ -1,6 +1,7 @@
 import http from 'node:http';
 import { randomBytes, randomUUID, createHash } from 'node:crypto';
-import { readFile, mkdir, writeFile, rename } from 'node:fs/promises';
+import { readFile, mkdir, writeFile, rename, stat } from 'node:fs/promises';
+import { gzipSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import nacl from 'tweetnacl';
@@ -197,6 +198,16 @@ async function body(req, maximum = 32768) {
   for await (const chunk of req) { text += chunk; if (Buffer.byteLength(text) > maximum) fail(413, 'That request is too large.'); }
   try { const parsed = JSON.parse(text); if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) fail(400, 'Invalid request.'); return parsed; } catch { fail(400, 'Invalid request.'); }
 }
+// Static files are read, hashed and compressed once per change, so slow connections download them
+// compressed and only when they changed. The modification time is checked so frontend edits still apply on refresh.
+const staticAssets = new Map();
+async function staticAsset(file) {
+  const { mtimeMs } = await stat(file), cached = staticAssets.get(file);
+  if (cached?.mtimeMs === mtimeMs) return cached;
+  const bytes = await readFile(file);
+  const asset = { mtimeMs, bytes, gzip: gzipSync(bytes, { level: 9 }), etag: `"${createHash('sha256').update(bytes).digest('base64url').slice(0, 27)}"` };
+  staticAssets.set(file, asset); return asset;
+}
 const devHosts = new Set(['localhost', '127.0.0.1', '[::1]', ...(process.env.HOST && !['0.0.0.0', '::'].includes(process.env.HOST) ? [process.env.HOST.includes(':') ? `[${process.env.HOST}]` : process.env.HOST] : [])].map(x => x.toLowerCase()));
 const server = http.createServer(async (req, res) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -214,7 +225,12 @@ const server = http.createServer(async (req, res) => {
       if (req.method === 'GET' && ['/about', '/about/', '/chat'].includes(url.pathname)) { res.writeHead(301, { Location: url.pathname === '/chat' ? '/chat/' : '/' }); res.end(); return; }
       if (req.method !== 'GET' || !files[url.pathname]) fail(404, 'Not found.');
       const [file, type] = files[url.pathname];
-      res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'no-cache' }); res.end(await readFile(path.join(root, 'public', file))); return;
+      const asset = await staticAsset(path.join(root, 'public', file));
+      // Browsers revalidate every load, but an unchanged file costs a 304 instead of a full download.
+      const headers = { 'Content-Type': type, 'Cache-Control': 'no-cache', ETag: asset.etag, Vary: 'Accept-Encoding' };
+      if (req.headers['if-none-match'] === asset.etag) { res.writeHead(304, headers); res.end(); return; }
+      const gzip = /\bgzip\b/.test(req.headers['accept-encoding'] || '');
+      res.writeHead(200, gzip ? { ...headers, 'Content-Encoding': 'gzip' } : headers); res.end(gzip ? asset.gzip : asset.bytes); return;
     }
     if (logClientAddress) {
       // Opt-in, one-time diagnostic for configuring TRUSTED_PROXY_ADDRESSES. Disable it again afterwards.
@@ -338,10 +354,11 @@ const server = http.createServer(async (req, res) => {
       const clientStreams = [...streamClients.values()].filter(key => key === clientKey).length;
       if (streamClients.size >= 2000 || clientStreams >= 30) fail(429, 'Too many active connections. Try again shortly.');
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
-      res.write(': connected\n\n'); session.connected = true; session.streams.add(res); streamClients.set(res, clientKey); onlineCount = streamClients.size;
+      res.write('retry: 3000\n: connected\n\n'); session.connected = true; session.streams.add(res); streamClients.set(res, clientKey); onlineCount = streamClients.size;
       // The new stream gets an immediate, current snapshot; everyone else gets the coalesced fan-out.
       emit(session, 'people', onlinePeople(session)); emit(session, 'rooms', roomList()); presence(); publishRooms(); emit(session, 'groups-changed', {});
-      const timer = setInterval(() => { session.seen = Date.now(); res.write(': heartbeat\n\n'); }, 20000);
+      // A named event rather than a comment, so the browser can notice a connection that silently stopped delivering.
+      const timer = setInterval(() => { session.seen = Date.now(); res.write('event: ping\ndata: {}\n\n'); }, 15000);
       res.on('close', () => { clearInterval(timer); session.streams.delete(res); streamClients.delete(res); onlineCount = streamClients.size; presence(); publishRooms(); }); return;
     }
     if (url.pathname === '/api/history' && req.method === 'GET') {

@@ -137,6 +137,7 @@ Additional browser checks:
 | --- | --- |
 | `npm run test:groups:browser` | Temporary rooms: access, encryption, ownership, kicks, mobile layout |
 | `npm run test:room-controls:browser` | Temporary room controls: settings, invite links, moderators, mute, slow mode, bans, lock |
+| `npm run test:slow-network:browser` | Temporary rooms on a slow connection (like Tor): concurrent sends during membership changes, message order, reconnect catch-up |
 | `npm run test:private-controls:browser` | Blocking, unblocking, removing chats from the sidebar |
 | `npm run test:editing:browser` | Editing messages |
 | `npm run test:accounts:browser` | Registration, login, account settings |

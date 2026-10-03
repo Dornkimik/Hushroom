@@ -14,6 +14,7 @@
     "test:browser": "node scripts/browser-check.mjs",
     "test:groups:browser": "node scripts/group-browser-check.mjs",
     "test:room-controls:browser": "node scripts/room-controls-browser-check.mjs",
+    "test:slow-network:browser": "node scripts/slow-network-browser-check.mjs",
     "test:feedback:browser": "node scripts/feedback-browser-check.mjs"
   },
   "engines": {
