@@ -486,3 +486,17 @@ test('history sharing lets later members read messages sent while it was on, ver
   assert.deepEqual(call(d, 'history', { group }, 'GET').map(m => m.id), [m1.id, m2.id, call(c, 'history', { group }, 'GET')[2].id, fileId, after.id]);
   consistent(group);
 });
+
+test('members who are away leave their rooms, hand over ownership and keep room bans', () => {
+  const { store, users: [a, b, c], call } = setup();
+  const group = call(a, 'create', { name: 'Away' }).id;
+  call(b, 'join', { group }); call(c, 'join', { group });
+  call(a, 'ban', { group, member: c.id });
+  const solo = call(a, 'create', { name: 'Solo' }).id;
+  store.leaveAll(a.id);
+  assert.equal(store.get(group).owner, b.id);
+  assert.equal(store.get(group).members.has(a.id), false);
+  assert.equal(store.rooms.has(solo), false, 'a room emptied by leaving is removed');
+  assert.ok(store.get(group).banned.has(c.id));
+  assert.throws(() => call(c, 'join', { group }), /banned/);
+});

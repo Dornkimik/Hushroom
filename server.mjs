@@ -665,6 +665,8 @@ setInterval(() => {
   for (const [token, s] of sessions) if (!online(s) && Date.now() - s.seen > (s.connected ? 86400000 : 600000)) {
     removeSession(token, s);
   }
+  // Open streams refresh `seen` with every heartbeat, so this only ends memberships after 15 minutes away.
+  for (const s of sessions.values()) if (!online(s) && Date.now() - s.seen > 900000) groups.leaveAll(s.id);
   histories.sweep(new Set([...sessions.values()].map(s => s.id)));
   attachments.sweep();
   groups.sweep();
